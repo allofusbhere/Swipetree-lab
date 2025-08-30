@@ -1,18 +1,9 @@
-/* SwipeTree Labs — sandbox UI */
-html, body { height:100%; margin:0; overscroll-behavior:none; }
-body { background:#0b0c10; color:#e6edf3; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-
-/* Disable iOS/Safari long‑press actions & selection */
-.stage, #anchor, img { 
-  touch-action:none; 
-  -ms-touch-action:none;
-  -webkit-user-drag:none;
-  -webkit-touch-callout:none;
-  -webkit-user-select:none;
-  user-select:none;
+/* SwipeTree Labs — sandbox UI with iPad long‑press suppression */
+html, body {
+  height:100%; margin:0; overscroll-behavior:none;
+  -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
 }
-
-#stage, #anchor { /* legacy alias if code references these IDs */ }
+body { background:#0b0c10; color:#e6edf3; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
 
 .labBanner{ position:sticky; top:0; z-index:20; background:#2c3342; color:#cbd5e1; padding:.4rem .75rem; font-size:.9rem; border-bottom:1px solid #3a4357;}
 .labBanner span{ opacity:.9; }
@@ -26,14 +17,23 @@ body { background:#0b0c10; color:#e6edf3; font-family:ui-sans-serif,system-ui,-a
 .btn-secondary{ background:#2c3342; color:#e6edf3; }
 .hidden{ display:none; }
 
-.stage{ position:relative; display:grid; place-items:center; width:100%; height:100%; overflow:hidden; }
-#anchor{ max-width:min(92vw,760px); max-height:min(72vh,720px); object-fit:contain; border-radius:1rem; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+.stage{
+  position:relative; display:grid; place-items:center; width:100%; height:100%; overflow:hidden;
+  touch-action:none; -ms-touch-action:none;
+}
+.anchor{
+  width:min(92vw,760px); height:min(72vh,720px);
+  background-color:#0b0c10;
+  background-position:center; background-repeat:no-repeat; background-size:contain;
+  border-radius:1rem; box-shadow:0 8px 30px rgba(0,0,0,.35);
+}
 
 .grid{ position:absolute; inset:0; background:#0b0c10; padding:1rem; display:grid;
        grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:1rem; overflow:auto; }
-.card{ background:#151922; border:1px solid #243047; border-radius:1rem; padding:.5rem; display:grid; place-items:center; box-shadow:0 8px 24px rgba(0,0,0,.35); }
-.card img{ width:100%; height:100%; object-fit:contain; border-radius:.75rem; }
-.cardLabel{ margin-top:.25rem; font-size:.85rem; color:#aab4c2; text-align:center; }
+
+.card{ background:#151922; border:1px solid #243047; border-radius:1rem; padding:.5rem; display:grid; gap:.4rem; place-items:center; box-shadow:0 8px 24px rgba(0,0,0,.35); }
+.face{ width:100%; aspect-ratio:1/1; background-position:center; background-repeat:no-repeat; background-size:contain; border-radius:.75rem; }
+.cardLabel{ font-size:.85rem; color:#aab4c2; text-align:center; }
 
 /* Parents grid: 2-up centered */
 .grid.parents{ grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); place-items:center; }
@@ -42,13 +42,3 @@ body { background:#0b0c10; color:#e6edf3; font-family:ui-sans-serif,system-ui,-a
 .hint{ text-align:center; padding:.6rem; color:#98a6b3; font-size:.9rem; background:#0f1115; border-top:1px solid #1e2228; }
 .label{ padding:.2rem .5rem; background:#202738; border:1px solid #2a3752; border-radius:.5rem; color:#cbd5e1; }
 .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
-
-/* SoftEdit overlay (flagged) */
-.overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:grid; place-items:center; z-index:50; }
-.overlayCard{ background:#111317; border:1px solid #263143; border-radius:1rem; padding:1rem; width:min(92vw, 420px); box-shadow:0 10px 40px rgba(0,0,0,.5); }
-.overlayCard h3{ margin:0 0 .25rem 0; }
-.overlayCard .dim{ color:#9dacbc; }
-.tiny{ font-size:.85rem; }
-.row{ display:flex; }
-.gap{ gap:.5rem; }
-#editInput{ width:100%; background:#0f1115; color:#e6edf3; border:1px solid #283040; border-radius:.5rem; padding:.5rem .6rem; margin:.5rem 0; }
