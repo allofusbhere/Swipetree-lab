@@ -27,11 +27,29 @@
       <!-- Offscreen preloader IMG warms Safari's cache; cannot be interacted with -->
       <img id="preload" alt="" class="ghostImg" draggable="false" />
       <div id="grid" class="grid hidden" aria-live="polite"></div>
+
+      <!-- Minimal SoftEdit overlay (lab only) -->
+      <div id="editor" class="editor hidden" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+        <div class="panel">
+          <div class="panelHead">
+            <div id="edTitle">SoftEdit (Lab)</div>
+            <button id="edClose" class="btn btnGhost" aria-label="Close">✕</button>
+          </div>
+          <div class="panelBody">
+            <div class="row"><span class="k">ID</span><span class="v" id="edId"></span></div>
+            <div class="row"><span class="k">Image</span><a id="edOpen" class="link" target="_blank" rel="noopener">Open in new tab</a></div>
+            <div class="row note">Long‑press is handled by the app (no iOS sheet). This is a placeholder to prove the gesture path.</div>
+          </div>
+          <div class="panelFoot">
+            <button id="edDone" class="btn">Done</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <footer class="hint">
       <div>Swipe: ◀ siblings • ▶ spouse • ▲ parents • ▼ children</div>
-      <div>Tap a tile to anchor it • Back closes grid first</div>
+      <div>Tap a tile to anchor it • Back closes grid first • Long‑press = SoftEdit (if enabled)</div>
     </footer>
   </div>
 

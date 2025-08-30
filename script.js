@@ -1,4 +1,4 @@
-/* SwipeTree Labs — dual-path anchor preload to stabilize Safari paints */
+/* SwipeTree Labs — dual-path paint + Parents sizing + SoftEdit long-press (lab) */
 (function(){
   'use strict';
 
@@ -7,8 +7,11 @@
     document.addEventListener(t, e=>{ e.preventDefault(); }, {passive:false});
   });
 
+  const qs = new URLSearchParams(location.search);
+  const EXP_EDIT = (qs.get('exp')||'').includes('edit') || (window.CONFIG && window.CONFIG.ENABLE_SOFTEDIT);
   const IMAGE_BASE = (window.CONFIG && window.CONFIG.IMAGE_BASE) || 'https://allofusbhere.github.io/family-tree-images/';
-  const ENABLE_LABELS = !!(window.CONFIG && window.CONFIG.ENABLE_LABELS);
+  const ENABLE_LABELS = (qs.get('exp')||'').includes('labels') || (window.CONFIG && window.CONFIG.ENABLE_LABELS);
+
   const MAX_COUNT = 9;
   const THRESH = 28;
 
@@ -20,6 +23,13 @@
   const startForm = document.getElementById('startForm');
   const startIdInput = document.getElementById('startId');
   const labelName = document.getElementById('labelName');
+
+  // SoftEdit panel elements
+  const editor = document.getElementById('editor');
+  const edId = document.getElementById('edId');
+  const edOpen = document.getElementById('edOpen');
+  const edClose = document.getElementById('edClose');
+  const edDone = document.getElementById('edDone');
 
   const spouses = new Map();
   const labels = new Map();
@@ -133,12 +143,22 @@
   }
 
   function warmAndPaint(url){
-    // Set immediately (fast path)
-    setAnchorBackground(url);
-    // Warm cache for Safari, then repaint on load
+    setAnchorBackground(url); // fast path
     preload.onload = () => { setAnchorBackground(url); };
     preload.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
   }
+
+  function openEditor(){
+    if (!EXP_EDIT) return;
+    edId.textContent = currentId || '';
+    edOpen.href = imgUrlForId(currentId);
+    editor.classList.remove('hidden');
+  }
+  function closeEditor(){
+    editor.classList.add('hidden');
+  }
+  edClose.addEventListener('click', closeEditor);
+  edDone.addEventListener('click', closeEditor);
 
   async function loadAnchor(id){
     currentId = String(id);
@@ -189,15 +209,23 @@
     }
   }
 
-  // Gestures
+  // Gestures + custom long-press for SoftEdit
   const opts = {passive:false, capture:true};
-  let active=false, sx=0, sy=0;
-  function onStart(x,y){ active=true; sx=x; sy=y; }
+  let active=false, sx=0, sy=0, lpTimer=null, onAnchor=false;
+  function onStart(x,y, target){
+    active=true; sx=x; sy=y; onAnchor = target === anchorEl;
+    if (EXP_EDIT && onAnchor){
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(()=>{ openEditor(); }, 600);
+    }
+  }
+  function onMove(){ /* we still prevent default to avoid OS gestures */ }
   function onEnd(x,y){
+    clearTimeout(lpTimer);
     if (!active) return; active=false;
     const dx = x - sx, dy = y - sy;
     const ax = Math.abs(dx), ay = Math.abs(dy);
-    if (ax < THRESH && ay < THRESH) return;
+    if (ax < THRESH && ay < THRESH) return; // tap-only
 
     if (ax > ay){
       if (dx > 0){
@@ -222,8 +250,8 @@
   }
 
   [stage, anchorEl].forEach(el=>{
-    el.addEventListener('pointerdown', e=>{ if(e.cancelable) e.preventDefault(); onStart(e.clientX,e.clientY); }, opts);
-    el.addEventListener('pointermove', e=>{ if(e.cancelable) e.preventDefault(); }, opts);
+    el.addEventListener('pointerdown', e=>{ if(e.cancelable) e.preventDefault(); onStart(e.clientX,e.clientY, e.target); }, opts);
+    el.addEventListener('pointermove', e=>{ if(e.cancelable) e.preventDefault(); onMove(); }, opts);
     el.addEventListener('pointerup',   e=>{ if(e.cancelable) e.preventDefault(); onEnd(e.clientX,e.clientY); }, opts);
   });
 
@@ -242,12 +270,19 @@
   });
 
   (async function init(){
+    // flags banner
+    const lf = document.getElementById('labFlags');
+    const bits = [];
+    if (ENABLE_LABELS) bits.push('labels');
+    if (EXP_EDIT) bits.push('edit');
+    lf.textContent = bits.length ? `Flags: ${bits.join(', ')}` : '';
+    // state
     grid.classList.add('hidden');
     anchorEl.classList.remove('hidden');
     await loadSpouseMap();
     await loadLabels();
-    const startId = getIdFromHash() || '100000';
+    const startId = (location.hash.match(/id=([0-9.]+)/)||[])[1] || '100000';
     loadAnchor(startId);
-    window.addEventListener('popstate', ()=>{ const id=getIdFromHash(); if(id) loadAnchor(id); });
+    window.addEventListener('popstate', ()=>{ const m=location.hash.match(/id=([0-9.]+)/); if(m) loadAnchor(m[1]); });
   })();
 })();
