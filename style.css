@@ -1,4 +1,4 @@
-/* SwipeTree Labs — sandbox UI with iPad long‑press suppression */
+/* SwipeTree Labs — iPad-safe UI with dual-path anchor preload */
 html, body {
   height:100%; margin:0; overscroll-behavior:none;
   -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
@@ -14,28 +14,28 @@ body { background:#0b0c10; color:#e6edf3; font-family:ui-sans-serif,system-ui,-a
 #startForm{ display:flex; gap:.5rem; }
 #startId{ background:#0f1115; color:#e6edf3; border:1px solid #283040; border-radius:.5rem; padding:.4rem .6rem; width:12ch; }
 .btn{ background:#2b6cb0; color:#fff; border:none; border-radius:.6rem; padding:.45rem .75rem; cursor:pointer; }
-.btn-secondary{ background:#2c3342; color:#e6edf3; }
-.hidden{ display:none; }
+.hidden{ display:none !important; }
 
-.stage{
-  position:relative; display:grid; place-items:center; width:100%; height:100%; overflow:hidden;
-  touch-action:none; -ms-touch-action:none;
-}
+.stage{ position:relative; display:grid; place-items:center; width:100%; height:100%; overflow:hidden; touch-action:none; -ms-touch-action:none; }
 .anchor{
-  width:min(92vw,760px); height:min(72vh,720px);
+  width: 92vw; max-width: 760px;
+  height: 72vh; max-height: 720px;
   background-color:#0b0c10;
-  background-position:center; background-repeat:no-repeat; background-size:contain;
+  background-position:center center; background-repeat:no-repeat; background-size:contain;
   border-radius:1rem; box-shadow:0 8px 30px rgba(0,0,0,.35);
+}
+.ghostImg{
+  position:absolute; left:-9999px; top:-9999px; width:1px; height:1px; opacity:0;
+  pointer-events:none; -webkit-user-drag:none; user-drag:none;
 }
 
 .grid{ position:absolute; inset:0; background:#0b0c10; padding:1rem; display:grid;
        grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:1rem; overflow:auto; }
 
 .card{ background:#151922; border:1px solid #243047; border-radius:1rem; padding:.5rem; display:grid; gap:.4rem; place-items:center; box-shadow:0 8px 24px rgba(0,0,0,.35); }
-.face{ width:100%; aspect-ratio:1/1; background-position:center; background-repeat:no-repeat; background-size:contain; border-radius:.75rem; }
+.face{ width:100%; aspect-ratio:1/1; background-position:center center; background-repeat:no-repeat; background-size:contain; border-radius:.75rem; }
 .cardLabel{ font-size:.85rem; color:#aab4c2; text-align:center; }
 
-/* Parents grid: 2-up centered */
 .grid.parents{ grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); place-items:center; }
 .grid.parents .card{ max-width:320px; }
 

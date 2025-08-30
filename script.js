@@ -1,8 +1,7 @@
-/* SwipeTree Labs — background-image rendering (Safari-safe) */
+/* SwipeTree Labs — dual-path anchor preload to stabilize Safari paints */
 (function(){
   'use strict';
 
-  // Block context menu & iOS gesture events just in case
   window.addEventListener('contextmenu', e => e.preventDefault(), {capture:true});
   ['gesturestart','gesturechange','gestureend'].forEach(t=>{
     document.addEventListener(t, e=>{ e.preventDefault(); }, {passive:false});
@@ -10,14 +9,12 @@
 
   const IMAGE_BASE = (window.CONFIG && window.CONFIG.IMAGE_BASE) || 'https://allofusbhere.github.io/family-tree-images/';
   const ENABLE_LABELS = !!(window.CONFIG && window.CONFIG.ENABLE_LABELS);
-  const ENABLE_SOFTEDIT = !!(window.CONFIG && window.CONFIG.ENABLE_SOFTEDIT);
-  const NETLIFY_FN = (window.CONFIG && window.CONFIG.NETLIFY_FN) || '/.netlify/functions/labels';
-
   const MAX_COUNT = 9;
   const THRESH = 28;
 
   const stage = document.getElementById('stage');
   const anchorEl = document.getElementById('anchor');
+  const preload = document.getElementById('preload');
   const grid = document.getElementById('grid');
   const backBtn = document.getElementById('backBtn');
   const startForm = document.getElementById('startForm');
@@ -55,7 +52,7 @@
       }else if (data && typeof data === 'object'){
         for (const [a,b] of Object.entries(data)){ spouses.set(String(a), String(b)); }
       }
-    }catch(e){ /* optional */ }
+    }catch(e){}
   }
 
   async function loadLabels(){
@@ -70,7 +67,7 @@
           }
         }
       }
-    }catch(e){ /* optional */ }
+    }catch(e){}
   }
 
   function deriveParent(idStr){
@@ -128,20 +125,28 @@
     return idMain(parentId);
   }
 
-  function setAnchorImage(id){
-    const url = imgUrlForId(id);
-    anchorEl.classList.remove('hidden'); // ensure visible
-    anchorEl.style.display = 'block';
-    // Safari-safe form with quotes:
+  function setAnchorBackground(url){
     anchorEl.style.backgroundImage = 'url("' + url + '")';
-    anchorEl.setAttribute('aria-label', 'ID ' + id);
+    anchorEl.style.backgroundRepeat = 'no-repeat';
+    anchorEl.style.backgroundSize = 'contain';
+    anchorEl.style.backgroundPosition = 'center center';
+  }
+
+  function warmAndPaint(url){
+    // Set immediately (fast path)
+    setAnchorBackground(url);
+    // Warm cache for Safari, then repaint on load
+    preload.onload = () => { setAnchorBackground(url); };
+    preload.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
   }
 
   async function loadAnchor(id){
     currentId = String(id);
-    setAnchorImage(currentId);
+    const url = imgUrlForId(currentId);
+    anchorEl.classList.remove('hidden');
+    grid.classList.add('hidden');
+    warmAndPaint(url);
     setIdInHash(currentId);
-    hideGrid();
     if (ENABLE_LABELS) labelName.textContent = labels.get(currentId) || '';
   }
 
@@ -154,7 +159,7 @@
     return m ? m[1] : null;
   }
 
-  function makeTile(id, type){
+  function makeTile(id){
     const card = document.createElement('div'); card.className = 'card';
     const face = document.createElement('div'); face.className = 'face';
     face.style.backgroundImage = 'url("' + imgUrlForId(id) + '")';
@@ -169,13 +174,12 @@
 
   function showGrid(type, list){
     anchorEl.classList.add('hidden');
+    grid.classList.remove('hidden');
     grid.className = 'grid' + (type === 'parents' ? ' parents' : '');
-    grid.innerHTML = ''; grid.classList.remove('hidden');
+    grid.innerHTML = '';
 
     let added = 0;
-    Array.from(new Set(list)).forEach(id=>{
-      grid.appendChild(makeTile(id, type)); added++;
-    });
+    Array.from(new Set(list)).forEach(id=>{ grid.appendChild(makeTile(id)); added++; });
 
     if (added === 0){
       const msg = document.createElement('div');
@@ -183,11 +187,6 @@
       msg.textContent = 'No images available for this category.';
       grid.appendChild(msg);
     }
-  }
-
-  function hideGrid(){
-    grid.classList.add('hidden'); grid.innerHTML = '';
-    anchorEl.classList.remove('hidden');
   }
 
   // Gestures
@@ -229,19 +228,22 @@
   });
 
   backBtn.addEventListener('click', () => {
-    if (!grid.classList.contains('hidden')){ hideGrid(); return; }
+    if (!grid.classList.contains('hidden')){ grid.classList.add('hidden'); anchorEl.classList.remove('hidden'); return; }
     const prev = historyStack.pop(); if (prev) loadAnchor(prev);
   });
 
   startForm.addEventListener('submit', (e)=>{
     e.preventDefault();
-    const v = (startIdInput.value||'').trim();
+    let v = (startIdInput.value||'').trim();
+    v = v.replace(/[^0-9.]/g,''); // keep digits and optional .1
     if (!v) return;
     historyStack.length = 0;
     loadAnchor(v);
   });
 
   (async function init(){
+    grid.classList.add('hidden');
+    anchorEl.classList.remove('hidden');
     await loadSpouseMap();
     await loadLabels();
     const startId = getIdFromHash() || '100000';
