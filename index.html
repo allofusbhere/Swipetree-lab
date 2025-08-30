@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>SwipeTree</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="left"><button id="backBtn" class="btn" aria-label="Back" title="Back">← Back</button></div>
+      <div class="center">
+        <form id="startForm">
+          <label for="startId" class="sr-only">Start ID</label>
+          <input id="startId" name="startId" inputmode="numeric" placeholder="Enter ID (e.g., 100000)" />
+          <button class="btn" type="submit">Start</button>
+        </form>
+      </div>
+      <div class="right"><span id="labelName" class="label"></span></div>
+    </header>
+
+    <main id="stage" class="stage" tabindex="0">
+      <img id="anchor" alt="Anchor" />
+      <div id="grid" class="grid hidden" aria-live="polite"></div>
+    </main>
+
+    <footer class="hint">
+      <div>Swipe: ◀ siblings • ▶ spouse • ▲ parents • ▼ children</div>
+      <div>Tap a tile to anchor it • Back closes grid first</div>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
