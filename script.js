@@ -1,4 +1,4 @@
-/* SwipeTree Labs — background-image rendering to defeat iOS callout */
+/* SwipeTree Labs — background-image rendering (Safari-safe) */
 (function(){
   'use strict';
 
@@ -23,13 +23,6 @@
   const startForm = document.getElementById('startForm');
   const startIdInput = document.getElementById('startId');
   const labelName = document.getElementById('labelName');
-  const editBtn = document.getElementById('editBtn');
-
-  const editOverlay = document.getElementById('editOverlay');
-  const editForm = document.getElementById('editForm');
-  const editInput = document.getElementById('editInput');
-  const editFor = document.getElementById('editFor');
-  const editStatus = document.getElementById('editStatus');
 
   const spouses = new Map();
   const labels = new Map();
@@ -39,15 +32,6 @@
   function idMain(id){ return String(id).split('.')[0]; }
   function pow10(n){ return Math.pow(10, n); }
   function imgUrlForId(id){ return IMAGE_BASE + String(id) + '.jpg'; }
-
-  (function showFlags(){
-    const el = document.getElementById('labFlags');
-    const flags = [];
-    if (ENABLE_LABELS) flags.push('labels');
-    if (ENABLE_SOFTEDIT) flags.push('edit');
-    el.textContent = flags.length ? 'Flags: ' + flags.join(', ') : 'Flags: none';
-    if (!ENABLE_SOFTEDIT) editBtn.classList.add('hidden');
-  })();
 
   function trailingZerosCount(idStr){
     const main = idMain(idStr);
@@ -84,17 +68,9 @@
           for (const [id, name] of Object.entries(data)){
             labels.set(String(id), String(name));
           }
-          return;
         }
       }
     }catch(e){ /* optional */ }
-    try{
-      if (window.LABELS && typeof window.LABELS === 'object'){
-        for (const [id, name] of Object.entries(window.LABELS)){
-          labels.set(String(id), String(name));
-        }
-      }
-    }catch(e){}
   }
 
   function deriveParent(idStr){
@@ -154,7 +130,10 @@
 
   function setAnchorImage(id){
     const url = imgUrlForId(id);
-    anchorEl.style.backgroundImage = 'url(' + JSON.stringify(url).slice(1, -1) + ')';
+    anchorEl.classList.remove('hidden'); // ensure visible
+    anchorEl.style.display = 'block';
+    // Safari-safe form with quotes:
+    anchorEl.style.backgroundImage = 'url("' + url + '")';
     anchorEl.setAttribute('aria-label', 'ID ' + id);
   }
 
@@ -178,7 +157,7 @@
   function makeTile(id, type){
     const card = document.createElement('div'); card.className = 'card';
     const face = document.createElement('div'); face.className = 'face';
-    face.style.backgroundImage = 'url(' + JSON.stringify(imgUrlForId(id)).slice(1,-1) + ')';
+    face.style.backgroundImage = 'url("' + imgUrlForId(id) + '")';
     card.appendChild(face);
     if (ENABLE_LABELS){
       const name = labels.get(String(id));
@@ -195,8 +174,7 @@
 
     let added = 0;
     Array.from(new Set(list)).forEach(id=>{
-      const card = makeTile(id, type);
-      grid.appendChild(card); added++;
+      grid.appendChild(makeTile(id, type)); added++;
     });
 
     if (added === 0){
