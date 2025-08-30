@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>SwipeTree</title>
+  <title>SwipeTree Labs (Sandbox)</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="labBanner">LAB BUILD — safe sandbox for testing. <span id="labFlags"></span></div>
   <div id="app" class="app">
     <header class="topbar">
-      <div class="left"><button id="backBtn" class="btn" aria-label="Back" title="Back">← Back</button></div>
+      <div class="left">
+        <button id="backBtn" class="btn" aria-label="Back" title="Back">← Back</button>
+      </div>
       <div class="center">
         <form id="startForm">
           <label for="startId" class="sr-only">Start ID</label>
@@ -17,11 +20,14 @@
           <button class="btn" type="submit">Start</button>
         </form>
       </div>
-      <div class="right"><span id="labelName" class="label"></span></div>
+      <div class="right">
+        <span id="labelName" class="label"></span>
+        <button id="editBtn" class="btn btn-secondary hidden" title="Edit label (E)">Edit</button>
+      </div>
     </header>
 
     <main id="stage" class="stage" tabindex="0">
-      <img id="anchor" alt="Anchor" />
+      <img id="anchor" alt="Anchor" draggable="false" />
       <div id="grid" class="grid hidden" aria-live="polite"></div>
     </main>
 
@@ -31,6 +37,24 @@
     </footer>
   </div>
 
+  <!-- SoftEdit overlay (hidden by flag) -->
+  <div id="editOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <div class="overlayCard">
+      <h3 id="editTitle">Edit Label</h3>
+      <p id="editFor" class="dim"></p>
+      <form id="editForm">
+        <label for="editInput" class="sr-only">Name</label>
+        <input id="editInput" placeholder="Enter display name" />
+        <div class="row gap">
+          <button class="btn" type="submit">Save</button>
+          <button class="btn btn-secondary" id="editCancel" type="button">Cancel</button>
+        </div>
+        <div id="editStatus" class="dim tiny"></div>
+      </form>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

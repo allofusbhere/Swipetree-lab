@@ -1,8 +1,18 @@
-/* SwipeTree v133_grid_corefix + labels support */
+/* SwipeTree Labs — iOS long‑press suppression + stable core */
 (function(){
   'use strict';
 
-  const IMAGE_BASE = 'https://allofusbhere.github.io/family-tree-images/';
+  // Block iOS Safari context menu / pinch gestures across the app
+  window.addEventListener('contextmenu', e => e.preventDefault(), {capture:true});
+  ['gesturestart','gesturechange','gestureend'].forEach(t=>{
+    document.addEventListener(t, e=>{ e.preventDefault(); }, {passive:false});
+  });
+
+  const IMAGE_BASE = (window.CONFIG && window.CONFIG.IMAGE_BASE) || 'https://allofusbhere.github.io/family-tree-images/';
+  const ENABLE_LABELS = !!(window.CONFIG && window.CONFIG.ENABLE_LABELS);
+  const ENABLE_SOFTEDIT = !!(window.CONFIG && window.CONFIG.ENABLE_SOFTEDIT);
+  const NETLIFY_FN = (window.CONFIG && window.CONFIG.NETLIFY_FN) || '/.netlify/functions/labels';
+
   const MAX_COUNT = 9;
   const THRESH = 28;
 
@@ -13,17 +23,31 @@
   const startForm = document.getElementById('startForm');
   const startIdInput = document.getElementById('startId');
   const labelName = document.getElementById('labelName');
+  const editBtn = document.getElementById('editBtn');
+
+  const editOverlay = document.getElementById('editOverlay');
+  const editForm = document.getElementById('editForm');
+  const editInput = document.getElementById('editInput');
+  const editFor = document.getElementById('editFor');
+  const editStatus = document.getElementById('editStatus');
 
   const spouses = new Map();
   const labels = new Map();
   const historyStack = [];
   let currentId = null;
-  let mode = 'anchor';
-  let gridType = null;
 
-  function pow10(n){ return Math.pow(10, n); }
   function idMain(id){ return String(id).split('.')[0]; }
+  function pow10(n){ return Math.pow(10, n); }
   function imgUrlForId(id){ return IMAGE_BASE + String(id) + '.jpg'; }
+
+  (function showFlags(){
+    const el = document.getElementById('labFlags');
+    const flags = [];
+    if (ENABLE_LABELS) flags.push('labels');
+    if (ENABLE_SOFTEDIT) flags.push('edit');
+    el.textContent = flags.length ? 'Flags: ' + flags.join(', ') : 'Flags: none';
+    if (!ENABLE_SOFTEDIT) editBtn.classList.add('hidden');
+  })();
 
   function trailingZerosCount(idStr){
     const main = idMain(idStr);
@@ -47,10 +71,11 @@
       }else if (data && typeof data === 'object'){
         for (const [a,b] of Object.entries(data)){ spouses.set(String(a), String(b)); }
       }
-    }catch(e){ console.warn('spouse_link.json not loaded', e); }
+    }catch(e){ /* optional */ }
   }
 
   async function loadLabels(){
+    if (!ENABLE_LABELS) return;
     try{
       const res = await fetch('labels.json?v=' + Date.now(), {cache:'no-store'});
       if (res.ok){
@@ -62,8 +87,7 @@
           return;
         }
       }
-    }catch(e){ console.warn('labels.json not loaded', e); }
-    // fallback to labels.js global
+    }catch(e){ /* optional */ }
     try{
       if (window.LABELS && typeof window.LABELS === 'object'){
         for (const [id, name] of Object.entries(window.LABELS)){
@@ -129,25 +153,25 @@
   }
 
   async function loadAnchor(id){
-    currentId = String(id);
-    anchorEl.src = imgUrlForId(currentId);
-    anchorEl.setAttribute('data-id', currentId);
-    setIdInHash(currentId);
+    const current = String(id);
+    anchorEl.src = imgUrlForId(current);
+    anchorEl.setAttribute('data-id', current);
+    setIdInHash(current);
     hideGrid();
-    labelName.textContent = labels.get(currentId) || '';
+    if (ENABLE_LABELS) labelName.textContent = labels.get(current) || '';
   }
 
   function setIdInHash(id){
     const newHash = `#id=${id}`;
     if (location.hash !== newHash){ history.pushState({id}, '', newHash); }
   }
+
   function getIdFromHash(){
     const m = location.hash.match(/id=([0-9.]+)/);
     return m ? m[1] : null;
   }
 
   function showGrid(type, list){
-    mode = 'grid'; gridType = type;
     anchorEl.classList.add('hidden');
     grid.className = 'grid' + (type === 'parents' ? ' parents' : '');
     grid.innerHTML = ''; grid.classList.remove('hidden');
@@ -157,19 +181,25 @@
       const card = document.createElement('div'); card.className = 'card';
       const img = document.createElement('img'); img.alt = type; img.loading = 'eager';
       img.src = imgUrlForId(id);
+      img.setAttribute('draggable','false');
+      img.style.webkitTouchCallout = 'none';
+      img.style.webkitUserSelect = 'none';
+      img.style.userSelect = 'none';
       img.onload = ()=>{
         card.appendChild(img);
-        const name = labels.get(String(id));
-        if (name){
-          const cap = document.createElement('div');
-          cap.className = 'cardLabel';
-          cap.textContent = name;
-          card.appendChild(cap);
+        if (ENABLE_LABELS){
+          const name = labels.get(String(id));
+          if (name){
+            const cap = document.createElement('div');
+            cap.className = 'cardLabel';
+            cap.textContent = name;
+            card.appendChild(cap);
+          }
         }
-        card.addEventListener('click', ()=>{ historyStack.push(currentId); loadAnchor(id); });
+        card.addEventListener('click', ()=>{ loadAnchor(id); });
         grid.appendChild(card); added++;
       };
-      img.onerror = ()=>{ /* skip missing images */ };
+      img.onerror = ()=>{ /* skip missing */ };
     };
 
     Array.from(new Set(list)).forEach(addTile);
@@ -185,34 +215,34 @@
   }
 
   function hideGrid(){
-    mode = 'anchor'; gridType = null;
     grid.classList.add('hidden'); grid.innerHTML = '';
     anchorEl.classList.remove('hidden');
   }
 
-  let active=false, sx=0, sy=0;
-  function onStart(x,y){ active=true; sx=x; sy=y; }
+  // Gestures (preventDefault on pointerdown helps suppress iOS callouts)
+  const opts = {passive:false, capture:true};
+  function onStart(x,y){ this._sx=x; this._sy=y; this._active=true; }
   function onEnd(x,y){
-    if (!active) return; active=false;
-    const dx = x - sx, dy = y - sy;
+    if (!this._active) return; this._active=false;
+    const dx = x - this._sx, dy = y - this._sy;
     const ax = Math.abs(dx), ay = Math.abs(dy);
-    if (ax < THRESH && ay < THRESH) return;
+    if (ax < 28 && ay < 28) return;
 
     if (ax > ay){
       if (dx > 0){
-        const s = resolveSpouseId(currentId); if (s){ historyStack.push(currentId); loadAnchor(s); }
+        const s = resolveSpouseId(getIdFromHash()); if (s){ loadAnchor(s); }
       } else {
-        const sibs = deriveSiblingsList(currentId);
+        const sibs = deriveSiblingsList(getIdFromHash());
         showGrid('siblings', sibs);
       }
     } else {
       if (dy < 0){
-        const pA = deriveParent(currentId);
+        const pA = deriveParent(getIdFromHash());
         const list = []; if (pA){ list.push(pA); const pB = resolveOtherParent(pA); if (pB) list.push(pB); }
         showGrid('parents', list);
       } else {
-        const kidsSelf = deriveChildrenList(currentId);
-        const s = resolveSpouseId(currentId);
+        const kidsSelf = deriveChildrenList(getIdFromHash());
+        const s = resolveSpouseId(getIdFromHash());
         const kidsSpouse = s ? deriveChildrenList(s) : [];
         const merged = Array.from(new Set([...kidsSelf, ...kidsSpouse]));
         showGrid('children', merged);
@@ -220,39 +250,29 @@
     }
   }
 
-  const opts = {passive:false, capture:true};
-  if (window.PointerEvent){
-    [stage, anchorEl].forEach(el=>{
-      el.addEventListener('pointerdown', e=>onStart(e.clientX,e.clientY), opts);
-      el.addEventListener('pointermove', e=>{ if(e.cancelable) e.preventDefault(); }, opts);
-      el.addEventListener('pointerup',   e=>onEnd(e.clientX,e.clientY), opts);
-    });
-  } else {
-    [stage, anchorEl].forEach(el=>{
-      el.addEventListener('touchstart', e=>{ const t=e.touches&&e.touches[0]; if(!t) return; onStart(t.clientX,t.clientY); if(e.cancelable) e.preventDefault(); }, opts);
-      el.addEventListener('touchmove', e=>{ if(e.cancelable) e.preventDefault(); }, opts);
-      el.addEventListener('touchend',  e=>{ const t=e.changedTouches&&e.changedTouches[0]; if(!t) return; onEnd(t.clientX,t.clientY); if(e.cancelable) e.preventDefault(); }, opts);
-      el.addEventListener('mousedown', e=>onStart(e.clientX,e.clientY));
-      el.addEventListener('mouseup',   e=>onEnd(e.clientX,e.clientY));
-    });
-  }
+  [stage, anchorEl].forEach(el=>{
+    el.addEventListener('pointerdown', e=>{ if(e.cancelable) e.preventDefault(); onStart.call(el, e.clientX, e.clientY); }, opts);
+    el.addEventListener('pointermove', e=>{ if(e.cancelable) e.preventDefault(); }, opts);
+    el.addEventListener('pointerup',   e=>{ if(e.cancelable) e.preventDefault(); onEnd.call(el, e.clientX, e.clientY); }, opts);
+  });
 
   backBtn.addEventListener('click', () => {
-    if (mode === 'grid'){ hideGrid(); return; }
-    const prev = historyStack.pop(); if (prev) loadAnchor(prev);
+    if (!grid.classList.contains('hidden')){ hideGrid(); return; }
+    history.back();
   });
+
   startForm.addEventListener('submit', (e)=>{
     e.preventDefault();
     const v = (startIdInput.value||'').trim();
     if (!v) return;
-    historyStack.length = 0;
     loadAnchor(v);
   });
 
   (async function init(){
     await loadSpouseMap();
     await loadLabels();
-    loadAnchor(getIdFromHash() || '100000');
+    const startId = getIdFromHash() || '100000';
+    loadAnchor(startId);
     window.addEventListener('popstate', ()=>{ const id=getIdFromHash(); if(id) loadAnchor(id); });
   })();
 })();
