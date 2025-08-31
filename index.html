@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>SwipeTree — SoftEdit rc1</title>
+  <title>SwipeTree — SoftEdit rc2</title>
   <link rel="stylesheet" href="style.css" />
+  <script src="config.js"></script>
 </head>
 <body>
   <div id="app">
@@ -16,27 +17,20 @@
       </div>
       <div id="backBtn" class="btn" role="button" aria-label="Back" title="Back">Back</div>
     </div>
-
-    <div id="stage" class="stage" tabindex="0" aria-live="polite">
-      <!-- Anchor goes here -->
-    </div>
-
-    <!-- Overlay grids (siblings/children/parents/spouse) will be mounted here -->
+    <div id="stage" class="stage" tabindex="0" aria-live="polite"></div>
     <div id="overlay-root"></div>
   </div>
-
-  <!-- SoftEdit modal: only shows on long‑press -->
   <dialog id="editModal" aria-labelledby="editTitle">
     <form method="dialog" id="editForm">
       <h3 id="editTitle">Edit Label</h3>
-      <p class="hint">Long‑press on the main photo to open this. Edits save globally if Netlify is connected, else locally.</p>
+      <p class="hint">Long-press the main photo to open. Saves to Netlify if configured, else local.</p>
       <div class="field">
         <label for="editName">Display Name</label>
         <input id="editName" name="name" placeholder="e.g., Aaron Holland" />
       </div>
       <div class="field">
         <label for="editDOB">Birthdate</label>
-        <input id="editDOB" name="dob" placeholder="YYYY‑MM‑DD" />
+        <input id="editDOB" name="dob" placeholder="YYYY-MM-DD" />
       </div>
       <menu>
         <button type="reset" value="cancel" id="cancelEdit">Cancel</button>
@@ -44,7 +38,6 @@
       </menu>
     </form>
   </dialog>
-
   <script src="script.js"></script>
 </body>
 </html>
