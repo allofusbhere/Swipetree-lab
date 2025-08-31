@@ -1,0 +1,15 @@
+# Ensures Netlify uses netlify/functions for serverless functions
+[functions]
+  directory = "netlify/functions"
+
+# No build step; serve files from the repo root
+[build]
+  publish = "/"
+
+# Allow cross-origin requests from GitHub Pages (optional; CORS is already handled in labels.js)
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "POST, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type"
