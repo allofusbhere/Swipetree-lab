@@ -1,0 +1,28 @@
+// netlify/functions/labels.js
+export default async (req, context) => {
+  const origin = req.headers.get('origin') || '*';
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+
+  try {
+    const body = await req.json();
+    const { id, name = '', dob = '' } = body || {};
+    if (!id) return new Response(JSON.stringify({ ok:false, error:'Missing id' }), { status: 400, headers });
+
+    // If you enable Netlify KV in the future:
+    // const kv = context.env?.LABELS_KV;
+    // if (kv) {
+    //   await kv.put(`label:${id}`, JSON.stringify({ name, dob }));
+    //   return new Response(JSON.stringify({ ok:true, storage:'kv' }), { status: 200, headers });
+    // }
+
+    return new Response(JSON.stringify({ ok:true, storage:'noop', id, name, dob }), { status: 200, headers });
+  } catch (e) {
+    return new Response(JSON.stringify({ ok:false, error:String(e) }), { status: 500, headers });
+  }
+}
