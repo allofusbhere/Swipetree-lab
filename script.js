@@ -1,288 +1,288 @@
-/* SwipeTree Labs — dual-path paint + Parents sizing + SoftEdit long-press (lab) */
-(function(){
-  'use strict';
+// SwipeTree — SoftEdit rc1
+// Focus: long‑press editor that plays nicely with swipe gestures.
+// Assumes existing swipe logic; here we include lightweight swipe + history so this file runs standalone.
+// Integrate portions into your main app if you already have working swipe + grids.
 
-  window.addEventListener('contextmenu', e => e.preventDefault(), {capture:true});
-  ['gesturestart','gesturechange','gestureend'].forEach(t=>{
-    document.addEventListener(t, e=>{ e.preventDefault(); }, {passive:false});
+(() => {
+  const $ = sel => document.querySelector(sel);
+  const stage = $('#stage');
+  const overlayRoot = $('#overlay-root');
+  const startInput = $('#startId');
+  const startBtn = $('#startBtn');
+  const backBtn = $('#backBtn');
+  const editModal = $('#editModal');
+  const editForm = $('#editForm');
+  const editName = $('#editName');
+  const editDOB = $('#editDOB');
+
+  // ------- Config -------
+  const LONG_PRESS_MS = 500;  // long‑press duration
+  const SWIPE_THRESHOLD = 40; // px
+  const GRID_TYPES = { LEFT:"siblings", RIGHT:"spouse", UP:"parents", DOWN:"children" };
+
+  // History stack for Back behavior
+  const historyStack = [];
+  let anchorId = null;
+  let longPressTimer = null;
+  let pointerDownAt = null;
+  let editingEnabled = true;
+
+  // --- Label store (Netlify + localStorage fallback) ---
+  async function saveLabel(id, data) {
+    // Try Netlify function, fallback to localStorage
+    try {
+      const res = await fetch('/.netlify/functions/labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...data })
+      });
+      if (!res.ok) throw new Error('Netlify save failed');
+    } catch (e) {
+      // local fallback
+      const key = 'labels_v1';
+      const db = JSON.parse(localStorage.getItem(key) || '{}');
+      db[id] = { ...(db[id] || {}), ...data };
+      localStorage.setItem(key, JSON.stringify(db));
+    }
+  }
+
+  function loadLabel(id) {
+    // From Netlify would be fetched server-side; here we read from localStorage
+    const db = JSON.parse(localStorage.getItem('labels_v1') || '{}');
+    return db[id] || { name: '', dob: '' };
+  }
+
+  // --- Minimal image src resolver ---
+  function imgSrcFor(id) {
+    // Keep your existing resolver. This one assumes images live next to index.html as {id}.jpg.
+    return `${id}.jpg`;
+  }
+
+  // --- Render anchor ---
+  function renderAnchor(id) {
+    anchorId = id;
+    stage.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'anchor';
+    card.setAttribute('role','group');
+    card.setAttribute('aria-label', `Person ${id}`);
+    card.tabIndex = 0;
+
+    const img = document.createElement('img');
+    img.alt = `Photo ${id}`;
+    img.src = imgSrcFor(id);
+    img.onerror = () => { img.src = 'placeholder.jpg'; };
+
+    const label = document.createElement('div');
+    label.className = 'label';
+    const { name, dob } = loadLabel(id);
+    label.innerHTML = `<div class="name">${name || id}</div><div class="dob">${dob ? dob : ''}</div>`;
+
+    card.appendChild(img);
+    card.appendChild(label);
+    stage.appendChild(card);
+
+    // Attach gesture + long‑press to the anchor itself (the big photo)
+    attachGestures(card);
+  }
+
+  // --- Gesture + long‑press handling ---
+  function attachGestures(el) {
+    // Use pointer events; ensure touch-action is none on .stage to prevent page scroll
+    el.addEventListener('pointerdown', onPointerDown, { passive: false });
+    el.addEventListener('pointermove', onPointerMove, { passive: false });
+    el.addEventListener('pointerup', onPointerUp, { passive: false });
+    el.addEventListener('pointercancel', onPointerCancel, { passive: false });
+    el.addEventListener('contextmenu', e => e.preventDefault()); // iOS long‑press context menu
+  }
+
+  function clearLongPressTimer() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  function onPointerDown(e) {
+    if (document.body.classList.contains('grid-open')) return; // disable while grid open
+    pointerDownAt = { x: e.clientX, y: e.clientY, time: Date.now() };
+    // Schedule long‑press
+    clearLongPressTimer();
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      // If finger hasn't moved much, trigger edit
+      if (!pointerDownAt) return;
+      const moved = Math.hypot((e.clientX - pointerDownAt.x), (e.clientY - pointerDownAt.y));
+      if (moved < 6 && editingEnabled) openEditor(anchorId);
+    }, LONG_PRESS_MS);
+  }
+
+  function onPointerMove(e) {
+    if (!pointerDownAt) return;
+    // If we move significantly, cancel long‑press to prefer swipe
+    const dx = e.clientX - pointerDownAt.x;
+    const dy = e.clientY - pointerDownAt.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+      clearLongPressTimer();
+    }
+  }
+
+  function onPointerUp(e) {
+    // If long‑press already fired, do nothing
+    const start = pointerDownAt;
+    pointerDownAt = null;
+    if (!start) return;
+
+    // If we didn't long‑press, consider swipe
+    if (!longPressTimer) return; // long‑press already handled OR cancelled due to movement
+    clearLongPressTimer();
+
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const ax = Math.abs(dx), ay = Math.abs(dy);
+
+    if (Math.max(ax, ay) < SWIPE_THRESHOLD) {
+      // Tap: no-op for now
+      return;
+    }
+    // Determine direction
+    let dir = null;
+    if (ax > ay) dir = dx > 0 ? 'RIGHT' : 'LEFT';
+    else        dir = dy > 0 ? 'DOWN'  : 'UP';
+
+    openGrid(GRID_TYPES[dir]);
+  }
+
+  function onPointerCancel() {
+    clearLongPressTimer();
+    pointerDownAt = null;
+  }
+
+  // --- SoftEdit modal ---
+  function openEditor(id) {
+    const { name, dob } = loadLabel(id);
+    editName.value = name || '';
+    editDOB.value = dob || '';
+    editModal.showModal();
+    // Prevent accidental backdrop scroll on iOS
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeEditor() {
+    if (editModal.open) editModal.close();
+    document.body.style.overflow = '';
+  }
+
+  editForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = (editName.value || '').trim();
+    const dob = (editDOB.value || '').trim();
+    await saveLabel(anchorId, { name, dob });
+    // Update label on anchor immediately
+    const label = stage.querySelector('.anchor .label');
+    if (label) {
+      label.innerHTML = `<div class="name">${name || anchorId}</div><div class="dob">${dob ? dob : ''}</div>`;
+    }
+    closeEditor();
   });
 
-  const qs = new URLSearchParams(location.search);
-  const EXP_EDIT = (qs.get('exp')||'').includes('edit') || (window.CONFIG && window.CONFIG.ENABLE_SOFTEDIT);
-  const IMAGE_BASE = (window.CONFIG && window.CONFIG.IMAGE_BASE) || 'https://allofusbhere.github.io/family-tree-images/';
-  const ENABLE_LABELS = (qs.get('exp')||'').includes('labels') || (window.CONFIG && window.CONFIG.ENABLE_LABELS);
+  $('#cancelEdit').addEventListener('click', () => closeEditor());
+  editModal.addEventListener('close', () => { document.body.style.overflow=''; });
 
-  const MAX_COUNT = 9;
-  const THRESH = 28;
+  // --- Overlay grid stubs (replace with your real calculators) ---
+  function openGrid(kind) {
+    // In your real app, compute IDs from numeric rules.
+    // Here we generate a tiny fake list just to demonstrate UI flow.
+    const ids = mockIdsFor(kind, anchorId);
+    const grid = document.createElement('div');
+    grid.className = 'gridOverlay';
+    grid.setAttribute('role','dialog');
+    grid.setAttribute('aria-label', `${kind} of ${anchorId}`);
 
-  const stage = document.getElementById('stage');
-  const anchorEl = document.getElementById('anchor');
-  const preload = document.getElementById('preload');
-  const grid = document.getElementById('grid');
-  const backBtn = document.getElementById('backBtn');
-  const startForm = document.getElementById('startForm');
-  const startIdInput = document.getElementById('startId');
-  const labelName = document.getElementById('labelName');
+    ids.forEach(id => {
+      const item = document.createElement('div');
+      item.className = 'gridItem';
+      const img = document.createElement('img');
+      img.alt = `${id}`;
+      img.src = imgSrcFor(id);
+      img.onerror = () => { img.src = 'placeholder.jpg'; };
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const { name } = loadLabel(id);
+      meta.innerHTML = `<div class="name">${name || id}</div><div class="id">${id}</div>`;
+      item.appendChild(img);
+      item.appendChild(meta);
+      item.addEventListener('click', () => {
+        // Navigate
+        historyStack.push(anchorId);
+        renderAnchor(id);
+        closeGrid();
+      });
+      grid.appendChild(item);
+    });
 
-  // SoftEdit panel elements
-  const editor = document.getElementById('editor');
-  const edId = document.getElementById('edId');
-  const edOpen = document.getElementById('edOpen');
-  const edClose = document.getElementById('edClose');
-  const edDone = document.getElementById('edDone');
+    overlayRoot.innerHTML = '';
+    overlayRoot.appendChild(grid);
+    document.body.classList.add('grid-open');
 
-  const spouses = new Map();
-  const labels = new Map();
-  const historyStack = [];
-  let currentId = null;
-
-  function idMain(id){ return String(id).split('.')[0]; }
-  function pow10(n){ return Math.pow(10, n); }
-  function imgUrlForId(id){ return IMAGE_BASE + String(id) + '.jpg'; }
-
-  function trailingZerosCount(idStr){
-    const main = idMain(idStr);
-    let count = 0;
-    for (let i = main.length - 1; i >= 0; i--) { if (main[i] === '0') count++; else break; }
-    return count;
-  }
-
-  async function loadSpouseMap(){
-    try{
-      const res = await fetch('spouse_link.json?v=' + Date.now(), {cache:'no-store'});
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data)){
-        for (const pair of data){
-          if (Array.isArray(pair) && pair.length >= 2){
-            const a = String(pair[0]), b = String(pair[1]);
-            spouses.set(a,b); spouses.set(b,a);
-          }
-        }
-      }else if (data && typeof data === 'object'){
-        for (const [a,b] of Object.entries(data)){ spouses.set(String(a), String(b)); }
+    // Close grid by pressing Back or Escape
+    const onKey = (e) => {
+      if (e.key === 'Escape' || e.key === 'Backspace') {
+        closeGrid();
       }
-    }catch(e){}
+    };
+    window.addEventListener('keydown', onKey, { once:true });
   }
 
-  async function loadLabels(){
-    if (!ENABLE_LABELS) return;
-    try{
-      const res = await fetch('labels.json?v=' + Date.now(), {cache:'no-store'});
-      if (res.ok){
-        const data = await res.json();
-        if (data && typeof data === 'object'){
-          for (const [id, name] of Object.entries(data)){
-            labels.set(String(id), String(name));
-          }
-        }
-      }
-    }catch(e){}
+  function closeGrid() {
+    overlayRoot.innerHTML = '';
+    document.body.classList.remove('grid-open');
   }
 
-  function deriveParent(idStr){
-    const main = idMain(idStr);
-    const tz = trailingZerosCount(main);
-    const step = pow10(tz + 1);
-    const base = parseInt(main, 10);
-    const head = Math.floor(base / step) * step;
-    if (head === 0 || head === base) return null;
-    return String(head);
+  function mockIdsFor(kind, id) {
+    const base = parseInt(String(id).replace(/\D/g,''), 10) || 0;
+    if (kind === 'children')   return [base+1000, base+2000, base+3000].map(String);
+    if (kind === 'siblings')   return [base-3000, base-2000, base-1000, base+1000, base+2000].filter(x => parseInt(x,10)>0).map(String);
+    if (kind === 'parents')    return [base - (base%10000) || base+10000].map(String);
+    if (kind === 'spouse')     return [`${id}.1`];
+    return [];
   }
-  function deriveChildrenList(idStr){
-    const main = idMain(idStr);
-    const tz = trailingZerosCount(main);
-    if (tz < 1) return [];
-    const step = pow10(tz - 1);
-    const base = parseInt(main, 10);
-    const arr = [];
-    for (let n=1; n<=MAX_COUNT; n++){ arr.push(String(base + n*step)); }
-    return arr;
-  }
-  function deriveSiblingsList(idStr){
-    const parent = deriveParent(idStr);
-    if (parent){
-      const ptz = trailingZerosCount(parent);
-      if (ptz < 1) return [];
-      const step = pow10(ptz - 1);
-      const pbase = parseInt(idMain(parent), 10);
-      const me = parseInt(idMain(idStr), 10);
-      const arr = [];
-      for (let n=1; n<=MAX_COUNT; n++){
-        const sib = pbase + n*step;
-        if (sib !== me) arr.push(String(sib));
-      }
-      return arr;
+
+  // --- Back button ---
+  backBtn.addEventListener('click', () => {
+    if (document.body.classList.contains('grid-open')) {
+      closeGrid();
+      return;
     }
-    const main = idMain(idStr);
-    const tz = trailingZerosCount(main);
-    const step = pow10(tz);
-    const cohort = [];
-    for (let k=1; k<=9; k++){ cohort.push(String(k*step)); }
-    const me = String(parseInt(main,10));
-    return cohort.filter(x => x !== me);
-  }
-  function resolveSpouseId(idStr){
-    const ex = spouses.get(String(idStr));
-    if (ex) return ex;
-    if (String(idStr).includes('.1')) return idMain(idStr);
-    return String(idStr)+'.1';
-  }
-  function resolveOtherParent(parentId){
-    const s = spouses.get(String(parentId));
-    if (s) return s;
-    if (!String(parentId).includes('.1')) return String(parentId)+'.1';
-    return idMain(parentId);
-  }
+    const prev = historyStack.pop();
+    if (prev) renderAnchor(prev);
+  });
 
-  function setAnchorBackground(url){
-    anchorEl.style.backgroundImage = 'url("' + url + '")';
-    anchorEl.style.backgroundRepeat = 'no-repeat';
-    anchorEl.style.backgroundSize = 'contain';
-    anchorEl.style.backgroundPosition = 'center center';
-  }
-
-  function warmAndPaint(url){
-    setAnchorBackground(url); // fast path
-    preload.onload = () => { setAnchorBackground(url); };
-    preload.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
-  }
-
-  function openEditor(){
-    if (!EXP_EDIT) return;
-    edId.textContent = currentId || '';
-    edOpen.href = imgUrlForId(currentId);
-    editor.classList.remove('hidden');
-  }
-  function closeEditor(){
-    editor.classList.add('hidden');
-  }
-  edClose.addEventListener('click', closeEditor);
-  edDone.addEventListener('click', closeEditor);
-
-  async function loadAnchor(id){
-    currentId = String(id);
-    const url = imgUrlForId(currentId);
-    anchorEl.classList.remove('hidden');
-    grid.classList.add('hidden');
-    warmAndPaint(url);
-    setIdInHash(currentId);
-    if (ENABLE_LABELS) labelName.textContent = labels.get(currentId) || '';
-  }
-
-  function setIdInHash(id){
-    const newHash = `#id=${id}`;
-    if (location.hash !== newHash){ history.pushState({id}, '', newHash); }
-  }
-  function getIdFromHash(){
-    const m = location.hash.match(/id=([0-9.]+)/);
+  // --- Boot ---
+  function bootFromHash() {
+    const m = location.hash.match(/id=(\d+(?:\.\d+)?)/);
     return m ? m[1] : null;
   }
 
-  function makeTile(id){
-    const card = document.createElement('div'); card.className = 'card';
-    const face = document.createElement('div'); face.className = 'face';
-    face.style.backgroundImage = 'url("' + imgUrlForId(id) + '")';
-    card.appendChild(face);
-    if (ENABLE_LABELS){
-      const name = labels.get(String(id));
-      if (name){ const cap = document.createElement('div'); cap.className = 'cardLabel'; cap.textContent = name; card.appendChild(cap); }
+  startBtn.addEventListener('click', () => {
+    const id = (startInput.value || '').trim();
+    if (id) {
+      historyStack.length = 0;
+      renderAnchor(id);
+      location.hash = `#id=${id}`;
     }
-    card.addEventListener('click', ()=>{ historyStack.push(currentId); loadAnchor(id); });
-    return card;
-  }
-
-  function showGrid(type, list){
-    anchorEl.classList.add('hidden');
-    grid.classList.remove('hidden');
-    grid.className = 'grid' + (type === 'parents' ? ' parents' : '');
-    grid.innerHTML = '';
-
-    let added = 0;
-    Array.from(new Set(list)).forEach(id=>{ grid.appendChild(makeTile(id)); added++; });
-
-    if (added === 0){
-      const msg = document.createElement('div');
-      msg.style.color = '#aab4c2'; msg.style.textAlign = 'center';
-      msg.textContent = 'No images available for this category.';
-      grid.appendChild(msg);
-    }
-  }
-
-  // Gestures + custom long-press for SoftEdit
-  const opts = {passive:false, capture:true};
-  let active=false, sx=0, sy=0, lpTimer=null, onAnchor=false;
-  function onStart(x,y, target){
-    active=true; sx=x; sy=y; onAnchor = target === anchorEl;
-    if (EXP_EDIT && onAnchor){
-      clearTimeout(lpTimer);
-      lpTimer = setTimeout(()=>{ openEditor(); }, 600);
-    }
-  }
-  function onMove(){ /* we still prevent default to avoid OS gestures */ }
-  function onEnd(x,y){
-    clearTimeout(lpTimer);
-    if (!active) return; active=false;
-    const dx = x - sx, dy = y - sy;
-    const ax = Math.abs(dx), ay = Math.abs(dy);
-    if (ax < THRESH && ay < THRESH) return; // tap-only
-
-    if (ax > ay){
-      if (dx > 0){
-        const s = resolveSpouseId(currentId); if (s){ historyStack.push(currentId); loadAnchor(s); }
-      } else {
-        const sibs = deriveSiblingsList(currentId);
-        showGrid('siblings', sibs);
-      }
-    } else {
-      if (dy < 0){
-        const pA = deriveParent(currentId);
-        const list = []; if (pA){ list.push(pA); const pB = resolveOtherParent(pA); if (pB) list.push(pB); }
-        showGrid('parents', list);
-      } else {
-        const kidsSelf = deriveChildrenList(currentId);
-        const s = resolveSpouseId(currentId);
-        const kidsSpouse = s ? deriveChildrenList(s) : [];
-        const merged = Array.from(new Set([...kidsSelf, ...kidsSpouse]));
-        showGrid('children', merged);
-      }
-    }
-  }
-
-  [stage, anchorEl].forEach(el=>{
-    el.addEventListener('pointerdown', e=>{ if(e.cancelable) e.preventDefault(); onStart(e.clientX,e.clientY, e.target); }, opts);
-    el.addEventListener('pointermove', e=>{ if(e.cancelable) e.preventDefault(); onMove(); }, opts);
-    el.addEventListener('pointerup',   e=>{ if(e.cancelable) e.preventDefault(); onEnd(e.clientX,e.clientY); }, opts);
   });
 
-  backBtn.addEventListener('click', () => {
-    if (!grid.classList.contains('hidden')){ grid.classList.add('hidden'); anchorEl.classList.remove('hidden'); return; }
-    const prev = historyStack.pop(); if (prev) loadAnchor(prev);
+  window.addEventListener('hashchange', () => {
+    const id = bootFromHash();
+    if (id) {
+      historyStack.length = 0;
+      renderAnchor(id);
+    }
   });
 
-  startForm.addEventListener('submit', (e)=>{
-    e.preventDefault();
-    let v = (startIdInput.value||'').trim();
-    v = v.replace(/[^0-9.]/g,''); // keep digits and optional .1
-    if (!v) return;
-    historyStack.length = 0;
-    loadAnchor(v);
-  });
-
-  (async function init(){
-    // flags banner
-    const lf = document.getElementById('labFlags');
-    const bits = [];
-    if (ENABLE_LABELS) bits.push('labels');
-    if (EXP_EDIT) bits.push('edit');
-    lf.textContent = bits.length ? `Flags: ${bits.join(', ')}` : '';
-    // state
-    grid.classList.add('hidden');
-    anchorEl.classList.remove('hidden');
-    await loadSpouseMap();
-    await loadLabels();
-    const startId = (location.hash.match(/id=([0-9.]+)/)||[])[1] || '100000';
-    loadAnchor(startId);
-    window.addEventListener('popstate', ()=>{ const m=location.hash.match(/id=([0-9.]+)/); if(m) loadAnchor(m[1]); });
-  })();
+  // initial
+  const start = bootFromHash() || '100000';
+  startInput.value = start;
+  renderAnchor(start);
 })();
