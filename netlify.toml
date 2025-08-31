@@ -1,13 +1,10 @@
-# Netlify config — static site, no build step
+# Netlify config — disable build step & publish repo root
 [build]
+  base = "."
+  command = ""     # explicitly no build
   publish = "."
 
 [functions]
   directory = "netlify/functions"
 
-[[headers]]
-  for = "/.netlify/functions/*"
-  [headers.values]
-    Access-Control-Allow-Origin = "*"
-    Access-Control-Allow-Methods = "POST, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type"
+# Keep simple; no plugins
