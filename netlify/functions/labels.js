@@ -1,32 +1,39 @@
-// netlify/functions/labels.js — Node Functions (v1) syntax
-exports.handler = async (event, context) => {
-  const origin = (event.headers && event.headers.origin) || '*';
-  const headers = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+// netlify/functions/labels.js
+
+let LABELS = {}; // in-memory store (resets on cold start)
+
+exports.handler = async function(event) {
+  if (event.httpMethod === "GET") {
+    return {
+      statusCode: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ labels: LABELS })
+    };
+  }
+
+  if (event.httpMethod === "POST") {
+    try {
+      const data = JSON.parse(event.body || "{}");
+      if (data.labels && typeof data.labels === "object") {
+        LABELS = { ...LABELS, ...data.labels };
+      }
+      return {
+        statusCode: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ok: true, labels: LABELS })
+      };
+    } catch (err) {
+      return {
+        statusCode: 400,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ok: false, error: err.message })
+      };
+    }
+  }
+
+  return {
+    statusCode: 405,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ok: false, error: "Method Not Allowed" })
   };
-
-  // CORS preflight
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers, body: '' };
-  }
-
-  try {
-    if (event.httpMethod !== 'POST') {
-      return { statusCode: 405, headers, body: JSON.stringify({ ok:false, error:'Method Not Allowed' }) };
-    }
-
-    const body = JSON.parse(event.body || '{}');
-    const { id, name = '', dob = '' } = body;
-    if (!id) {
-      return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Missing id' }) };
-    }
-
-    // TODO: hook up real storage later; echo success for now
-    return { statusCode: 200, headers, body: JSON.stringify({ ok:true, storage:'noop', id, name, dob }) };
-  } catch (e) {
-    return { statusCode: 500, headers, body: JSON.stringify({ ok:false, error: String(e) }) };
-  }
 };
