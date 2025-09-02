@@ -1,136 +1,201 @@
 
-/*!
- * SwipeTree Lab — Device‑Independent Labels (RC1)
- * Purpose: keep labels (name/DOB) in sync across devices via Netlify.
- * Non‑invasive: works with existing code that reads/writes localStorage['labels'].
+/*! SwipeTree Lab — script.js (RC2)
+ * Single-file integration:
+ *  - visible anchor renderer (image + label)
+ *  - device-independent labels via Netlify (GET/POST)
+ *  - basic edge-friction so iPad doesn't bounce
  */
-(function () {
-  const ENDPOINT = '/.netlify/functions/labels';
+
+(function(){
+  // ---------- Config ----------
+  const NETLIFY_ENDPOINT = '/.netlify/functions/labels';
+  const IMAGE_BASE = 'https://allofusbhere.github.io/family-tree-images/';
+  const EXT = '.jpg';
+
+  // ---------- DOM bootstrap (works even if index.html is minimal) ----------
+  let app = document.getElementById('app');
+  if (!app) {
+    app = document.createElement('div');
+    app.id = 'app';
+    document.body.appendChild(app);
+  }
+  app.style.minHeight = '100dvh';
+  app.style.display = 'flex';
+  app.style.alignItems = 'center';
+  app.style.justifyContent = 'center';
+  app.style.background = '#000';
+  document.body.style.margin = '0';
+  document.body.style.overflow = 'hidden';
+
+  const wrap = document.createElement('div');
+  wrap.style.textAlign = 'center';
+  app.appendChild(wrap);
+
+  const img = document.createElement('img');
+  img.id = 'anchor';
+  img.style.maxWidth = 'min(92vw,92vh)';
+  img.style.maxHeight = 'min(92vh,92vw)';
+  img.style.objectFit = 'contain';
+  img.style.userSelect = 'none';
+  img.style.webkitUserDrag = 'none';
+  wrap.appendChild(img);
+
+  const label = document.createElement('div');
+  label.id = 'label';
+  label.style.color = '#fff';
+  label.style.marginTop = '12px';
+  label.style.opacity = '0.9';
+  label.style.fontFamily = 'system-ui, sans-serif';
+  wrap.appendChild(label);
+
+  // ---------- Edge friction (no page bounce) ----------
+  const surface = app;
+  document.addEventListener('gesturestart', e => e.preventDefault(), {passive:false});
+  document.addEventListener('gesturechange', e => e.preventDefault(), {passive:false});
+  document.addEventListener('gestureend', e => e.preventDefault(), {passive:false});
+  let active = false, touchId = null;
+  surface.addEventListener('touchstart', (e)=>{
+    if (e.touches.length === 1) { active = true; touchId = e.touches[0].identifier; e.preventDefault(); }
+    else { active = false; }
+  }, {passive:false});
+  surface.addEventListener('touchmove', (e)=>{ if (active) e.preventDefault(); }, {passive:false});
+  surface.addEventListener('touchend', (e)=>{
+    const still = Array.from(e.touches||[]).some(t => t.identifier === touchId);
+    if (!still) { active=false; touchId=null; }
+  }, {passive:false});
+  surface.addEventListener('touchcancel', ()=>{ active=false; touchId=null; }, {passive:false});
+  surface.addEventListener('wheel', (e)=>e.preventDefault(), {passive:false});
+  window.addEventListener('keydown', (e)=>{
+    const keys=['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '];
+    if (keys.includes(e.key)) e.preventDefault();
+  }, {passive:false});
+
+  // ---------- Labels sync (Netlify + localStorage) ----------
   const LABELS_KEY = 'labels';
   const BACKUP_KEY = 'labels_backup';
   const SYNC_FLAG = '__labels_sync_inflight__';
-  const POLL_INTERVAL = 30 * 1000; // refresh periodically in lab
+  const POLL_MS = 30000;
 
-  const log = (...a) => console.log('[SwipeTree Labels]', ...a);
-  const warn = (...a) => console.warn('[SwipeTree Labels]', ...a);
+  const log = (...a)=>console.log('[SwipeTree]', ...a);
+  const warn = (...a)=>console.warn('[SwipeTree]', ...a);
 
-  // Read/Write helpers for localStorage JSON under LABELS_KEY
-  function readLocal() {
-    try {
-      const raw = localStorage.getItem(LABELS_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch (e) {
-      warn('Failed to parse local labels, resetting.', e);
-      return {};
-    }
+  function readLocal(){
+    try { return JSON.parse(localStorage.getItem(LABELS_KEY) || '{}'); }
+    catch(e){ warn('bad local labels', e); return {}; }
   }
-  function writeLocal(obj) {
+  function writeLocal(map){
     try {
-      localStorage.setItem(LABELS_KEY, JSON.stringify(obj || {}));
-      localStorage.setItem(BACKUP_KEY, JSON.stringify({ at: Date.now(), data: obj || {} }));
-    } catch (e) {
-      warn('Failed to write local labels.', e);
-    }
+      localStorage.setItem(LABELS_KEY, JSON.stringify(map||{}));
+      localStorage.setItem(BACKUP_KEY, JSON.stringify({at:Date.now(), data: map||{}}));
+    } catch(e){ warn('write local failed', e); }
   }
-
-  // Fetch labels from Netlify
-  async function fetchRemote() {
+  async function fetchRemote(){
     try {
-      const r = await fetch(ENDPOINT, { method: 'GET', headers: { 'accept': 'application/json' } });
-      if (!r.ok) throw new Error('GET ' + ENDPOINT + ' ' + r.status);
+      const r = await fetch(NETLIFY_ENDPOINT, {method:'GET', headers:{accept:'application/json'}});
+      if (!r.ok) throw new Error('GET '+r.status);
       const data = await r.json();
-      // Support either {labels:{...}} or direct {...}
       return data && (data.labels || data) || {};
-    } catch (e) {
-      warn('Remote fetch failed; using local cache.', e);
-      return null; // signal failure
-    }
+    } catch(e){ warn('fetch remote failed', e); return null; }
   }
-
-  // Push full labels map to Netlify
-  async function pushRemote(fullMap) {
+  async function pushRemote(map){
     try {
-      const r = await fetch(ENDPOINT, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ op: 'upsert_all', labels: fullMap || {} })
+      const r = await fetch(NETLIFY_ENDPOINT, {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({op:'upsert_all', labels: map||{}})
       });
-      if (!r.ok) throw new Error('POST ' + ENDPOINT + ' ' + r.status);
+      if (!r.ok) throw new Error('POST '+r.status);
       return true;
-    } catch (e) {
-      warn('Remote push failed; changes remain local only.', e);
-      return false;
-    }
+    } catch(e){ warn('push remote failed', e); return false; }
   }
-
-  // Merge shallow objects (by id)
-  function mergeLabels(base, incoming) {
-    const out = { ...(base || {}) };
-    for (const [id, rec] of Object.entries(incoming || {})) {
-      if (!out[id]) out[id] = rec;
-      else out[id] = { ...(out[id] || {}), ...(rec || {}) };
+  function mergeLabels(a,b){
+    const out = {...(a||{})};
+    for(const [id,rec] of Object.entries(b||{})){
+      out[id] = {...(out[id]||{}), ...(rec||{})};
     }
     return out;
   }
 
-  // Intercept localStorage.setItem for LABELS_KEY to mirror to Netlify
   const origSetItem = localStorage.setItem.bind(localStorage);
-  localStorage.setItem = function (key, value) {
-    origSetItem(key, value);
-    if (key !== LABELS_KEY) return;
+  localStorage.setItem = function(k,v){
+    origSetItem(k,v);
+    if (k !== LABELS_KEY) return;
     try {
-      const current = JSON.parse(value || '{}');
-      // Debounce/microtask to avoid recursive storms if caller sets many times
-      queueMicrotask(() => {
+      const current = JSON.parse(v||'{}');
+      queueMicrotask(()=>{
         if (window[SYNC_FLAG]) return;
         window[SYNC_FLAG] = true;
-        pushRemote(current).finally(() => { window[SYNC_FLAG] = false; });
+        pushRemote(current).finally(()=>{ window[SYNC_FLAG]=false; });
       });
-    } catch (_) {
-      /* ignore */
-    }
+    } catch {}
   };
 
-  // Public helper to set single label (id -> {name?, dob?}) compatible with existing apps
-  window.setLabel = function (id, patch) {
+  window.setLabel = function(id, patch){
     if (!id) return;
-    const local = readLocal();
-    local[id] = { ...(local[id] || {}), ...(patch || {}) };
-    writeLocal(local); // triggers our overridden setItem & remote push
-    return local[id];
+    const map = readLocal();
+    map[id] = {...(map[id]||{}), ...(patch||{})};
+    writeLocal(map);
+    render(); // reflect immediately
   };
-  window.getLabel = function (id) {
-    const local = readLocal();
-    return local[id] || null;
-  };
-  window.getAllLabels = function () {
-    return readLocal();
-  };
+  window.getLabel = function(id){ return readLocal()[id] || null; };
 
-  // Initial Sync: fetch remote, merge into local, then push merged back (resolves drift)
-  (async function initSync() {
-    log('Initializing device‑independent labels sync…');
+  (async function initSync(){
+    log('Labels: init sync');
     const local = readLocal();
     const remote = await fetchRemote();
     if (remote) {
-      const merged = mergeLabels(remote, local); // remote base, keep any local edits
+      const merged = mergeLabels(remote, local);
       writeLocal(merged);
       await pushRemote(merged);
-      log('Labels synced from Netlify; entries:', Object.keys(merged).length);
+      log('Labels synced; entries:', Object.keys(merged).length);
     } else {
-      // remote unavailable; keep local only
       writeLocal(local);
-      log('Working offline with local labels; will retry later.');
+      log('Offline; using local labels');
     }
+    setInterval(async()=>{
+      const r = await fetchRemote();
+      if (r) {
+        const merged = mergeLabels(r, readLocal());
+        writeLocal(merged);
+        log('Periodic merge; entries:', Object.keys(merged).length);
+        render();
+      }
+    }, POLL_MS);
   })();
 
-  // Periodic refresh in lab so multiple devices converge without reload
-  setInterval(async () => {
-    const remote = await fetchRemote();
-    if (remote) {
-      const merged = mergeLabels(remote, readLocal());
-      writeLocal(merged);
-      log('Periodic refresh merged; entries:', Object.keys(merged).length);
-    }
-  }, POLL_INTERVAL);
+  // ---------- Anchor renderer + label UI ----------
+  function idFromHash(){
+    const m = location.hash.match(/id=([\d.]+)/);
+    return (m && m[1]) || '100000';
+  }
+  function imgUrl(id){ return IMAGE_BASE + id + EXT; }
+
+  function render(){
+    const id = idFromHash();
+    img.src = imgUrl(id);
+    img.alt = 'ID '+id;
+    const rec = window.getLabel(id);
+    label.textContent = rec ? `${rec.name || ''}${rec.dob ? ' ('+rec.dob+')' : ''}`.trim() : '';
+  }
+  window.addEventListener('hashchange', render);
+
+  // double-tap / dblclick to edit
+  let lastTap = 0;
+  img.addEventListener('touchend', (e)=>{
+    const now = Date.now();
+    if (now - lastTap < 350) { e.preventDefault(); edit(); }
+    lastTap = now;
+  }, {passive:false});
+  img.addEventListener('dblclick', (e)=>{ e.preventDefault(); edit(); });
+
+  function edit(){
+    const id = idFromHash();
+    const current = window.getLabel(id) || {};
+    const name = prompt('Name for '+id+'?', current.name || '');
+    const dob  = prompt('DOB for '+id+'? (optional)', current.dob || '');
+    if (name || dob) window.setLabel(id, {name, dob});
+  }
+
+  // initial draw
+  render();
 })();
