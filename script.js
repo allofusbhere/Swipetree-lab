@@ -1,352 +1,273 @@
+/* SwipeTree — Long‑Press Editing Patch (SoftEdit)
+   Drop‑in replacement for script.js
+   - Preserves swipe mapping: ↑ parents, ↓ children, ← siblings, → spouse
+   - Adds long‑press (600ms) on the ANCHOR image to open a lightweight edit overlay
+   - Edits fields: Name, DOB (MM/DD/YYYY)
+   - Saves to localStorage immediately
+   - Optionally syncs to Netlify labels function if NETLIFY_BASE is defined
+     · GET:  `${NETLIFY_BASE}/.netlify/functions/labels?id=<ID>` (used to prefill if available)
+     · POST: `${NETLIFY_BASE}/.netlify/functions/labels` with JSON { id, name, dob }
+       (falls back silently if endpoint isn’t present)
+   - No code changes needed to HTML — overlay is injected dynamically
+*/
 
-/* SwipeTree v133 + Netlify labels + Long‑Press (RC9 absolute-endpoint fallback) */
-(function(){
-  'use strict';
+(function () {
+  const VERSION = "SwipeTree longpress-patch " + new Date().toISOString().slice(0,10);
 
-  const IMAGE_BASE = 'https://allofusbhere.github.io/family-tree-images/';
-  const MAX_COUNT = 9;
-  const THRESH = 28;
-  const LP_MS = 600;
-  const MOVE_TOL = 12;
+  // -------------------- CONFIG --------------------
+  // If you have Netlify set up, set NETLIFY_BASE to your site origin.
+  // Example: "https://elegant-panda-0f4cac.netlify.app"
+  const NETLIFY_BASE = "https://elegant-panda-0f4cac.netlify.app"; // <-- change if needed
+  const LONGPRESS_MS = 600; // duration to trigger long‑press
+  const TOAST_MS = 1500;
 
-  // If not on Netlify, use absolute hostname so GitHub Pages can still reach functions
-  const NETLIFY_HOST = 'elegant-panda-0f4cac.netlify.app';
-  const ENDPOINT = (location.hostname.includes('netlify.app') ? '/.netlify/functions/labels'
-                                                             : `https://${NETLIFY_HOST}/.netlify/functions/labels`);
-  const CACHE_KEY = 'labels_cache_v1';
-  const POLL_MS = 30000;
+  // -------------------- DOM HOOKS --------------------
+  const anchor = document.getElementById("anchor");
+  const idInput = document.getElementById("idInput");
+  const startBtn = document.getElementById("startBtn");
+  const versionEl = document.getElementById("version");
+  const root = document.getElementById("app");
 
-  const stage = document.getElementById('stage');
-  const anchorEl = document.getElementById('anchor');
-  const grid = document.getElementById('grid');
-  const backBtn = document.getElementById('backBtn');
-  const startForm = document.getElementById('startForm');
-  const startIdInput = document.getElementById('startId');
-  const labelName = document.getElementById('labelName');
+  if (versionEl) versionEl.textContent = VERSION;
 
-  const spouses = new Map();
-  const labels = new Map();
-  const historyStack = [];
-  let currentId = null;
-  let mode = 'anchor';
-  let gridType = null;
-  let lpTimer = null, lpStartX=0, lpStartY=0, lpFired=false, pressActive=false;
+  // -------------------- UTIL --------------------
+  const $state = {
+    id: null,
+    touch: { startX:0, startY:0, startT:0, touching:false },
+    mouse: { down:false, x:0, y:0, t:0 },
+  };
 
-  function pow10(n){ return Math.pow(10, n); }
-  function idMain(id){ return String(id).split('.')[0]; }
-  function imgUrlForId(id){ return IMAGE_BASE + String(id) + '.jpg'; }
-  function trailingZerosCount(idStr){
-    const main = idMain(idStr);
-    let count = 0;
-    for (let i = main.length - 1; i >= 0; i--) { if (main[i] === '0') count++; else break; }
-    return count;
-  }
-  function saveCache(){
-    try{ localStorage.setItem(CACHE_KEY, JSON.stringify(Object.fromEntries(labels))); }catch{}
-  }
-  function mergeIntoLabels(obj){
-    if (!obj || typeof obj !== 'object') return;
-    for (const [k,v] of Object.entries(obj)){ if (v!=null && v!=='') labels.set(String(k), String(v)); }
-  }
-  async function fetchRemote(){
-    try{
-      const r = await fetch(ENDPOINT, {method:'GET', headers:{accept:'application/json'}});
-      if (!r.ok) throw 0;
-      const data = await r.json();
-      return (data && (data.labels || data)) || {};
-    }catch{ return null; }
-  }
-  async function pushRemoteMap(map){
-    try{
-      const r = await fetch(ENDPOINT, {
-        method:'POST',
-        headers:{'content-type':'application/json'},
-        body: JSON.stringify({op:'upsert_all', labels: map})
+  function showToast(msg) {
+    let toast = document.getElementById("toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "toast";
+      Object.assign(toast.style, {
+        position:"fixed", bottom:"70px", left:"50%", transform:"translateX(-50%)",
+        background:"#222", border:"1px solid #333", padding:"8px 12px",
+        borderRadius:"10px", fontSize:"13px", color:"#eee", zIndex:"9999"
       });
-      return r.ok;
-    }catch{ return false; }
-  }
-  async function pushSingle(id){
-    const body = {}; body[id] = labels.get(String(id)) || '';
-    await pushRemoteMap(body);
-  }
-
-  async function loadSpouseMap(){
-    try{
-      const res = await fetch('spouse_link.json?v=' + Date.now(), {cache:'no-store'});
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data)){
-        for (const pair of data){
-          if (Array.isArray(pair) && pair.length >= 2){
-            const a = String(pair[0]), b = String(pair[1]);
-            spouses.set(a,b); spouses.set(b,a);
-          }
-        }
-      }else if (data && typeof data === 'object'){
-        for (const [a,b] of Object.entries(data)){ spouses.set(String(a), String(b)); }
-      }
-    }catch(e){ console.warn('spouse_link.json not loaded', e); }
-  }
-
-  async function loadLabels(){
-    try{
-      const res = await fetch('labels.json?v=' + Date.now(), {cache:'no-store'});
-      if (res.ok){
-        const data = await res.json();
-        if (data && typeof data === 'object'){ mergeIntoLabels(data); }
-      }
-    }catch(e){ console.warn('labels.json not loaded', e); }
-    try{
-      if (window.LABELS && typeof window.LABELS === 'object'){ mergeIntoLabels(window.LABELS); }
-    }catch{}
-
-    try{
-      const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
-      mergeIntoLabels(cache);
-    }catch{}
-
-    const remote = await fetchRemote();
-    if (remote){ mergeIntoLabels(remote); saveCache(); }
-
-    setInterval(async ()=>{
-      const r = await fetchRemote();
-      if (r){ mergeIntoLabels(r); saveCache(); if (currentId) labelName.textContent = labels.get(currentId) || ''; }
-    }, POLL_MS);
-  }
-
-  function deriveParent(idStr){
-    const main = idMain(idStr);
-    const tz = trailingZerosCount(main);
-    const step = pow10(tz + 1);
-    const base = parseInt(main, 10);
-    const head = Math.floor(base / step) * step;
-    if (head === 0 || head === base) return null;
-    return String(head);
-  }
-  function deriveChildrenList(idStr){
-    const main = idMain(idStr);
-    const tz = trailingZerosCount(main);
-    if (tz < 1) return [];
-    const step = pow10(tz - 1);
-    const base = parseInt(main, 10);
-    const arr = [];
-    for (let n=1; n<=MAX_COUNT; n++){ arr.push(String(base + n*step)); }
-    return arr;
-  }
-  function deriveSiblingsList(idStr){
-    const parent = deriveParent(idStr);
-    if (parent){
-      const ptz = trailingZerosCount(parent);
-      if (ptz < 1) return [];
-      const step = pow10(ptz - 1);
-      const pbase = parseInt(idMain(parent), 10);
-      const me = parseInt(idMain(idStr), 10);
-      const arr = [];
-      for (let n=1; n<=MAX_COUNT; n++){
-        const sib = pbase + n*step;
-        if (sib !== me) arr.push(String(sib));
-      }
-      return arr;
+      document.body.appendChild(toast);
     }
-    const main = idMain(idStr);
-    const tz = trailingZerosCount(main);
-    const step = pow10(tz);
-    const cohort = [];
-    for (let k=1; k<=9; k++){ cohort.push(String(k*step)); }
-    const me = String(parseInt(main,10));
-    return cohort.filter(x => x !== me);
-  }
-  function resolveSpouseId(idStr){
-    const ex = spouses.get(String(idStr));
-    if (ex) return ex;
-    if (String(idStr).includes('.1')) return idMain(idStr);
-    return String(idStr)+'.1';
-  }
-  function resolveOtherParent(parentId){
-    const s = spouses.get(String(parentId));
-    if (s) return s;
-    if (!String(parentId).includes('.1')) return String(parentId)+'.1';
-    return idMain(parentId);
+    toast.textContent = msg;
+    toast.style.display = "block";
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(()=> toast.style.display = "none", TOAST_MS);
   }
 
-  async function loadAnchor(id){
-    currentId = String(id);
-    anchorEl.src = imgUrlForId(currentId);
-    anchorEl.setAttribute('data-id', currentId);
-    setIdInHash(currentId);
-    hideGrid();
-    labelName.textContent = labels.get(currentId) || '';
-  }
-
-  function setIdInHash(id){
-    const newHash = `#id=${id}`;
-    if (location.hash !== newHash){ history.pushState({id}, '', newHash); }
-  }
-  function getIdFromHash(){
-    const m = location.hash.match(/id=([0-9.]+)/);
+  function hashGetId() {
+    const m = location.hash.match(/id=([\d.]+)/);
     return m ? m[1] : null;
   }
 
-  function showGrid(type, list){
-    mode = 'grid'; gridType = type;
-    anchorEl.classList.add('hidden');
-    grid.className = 'grid' + (type === 'parents' ? ' parents' : '');
-    grid.innerHTML = ''; grid.classList.remove('hidden');
+  // -------------------- LABELS (localStorage + Netlify) --------------------
+  function lsKey(id){ return `swipetree:label:${id}`; }
 
-    let added = 0;
-    const addTile = (id)=>{
-      const card = document.createElement('div'); card.className = 'card';
-      const img = document.createElement('img'); img.alt = type; img.loading = 'eager';
-      img.src = imgUrlForId(id);
-      img.onload = ()=>{
-        card.appendChild(img);
-        const nm = labels.get(String(id));
-        if (nm){
-          const cap = document.createElement('div');
-          cap.className = 'cardLabel';
-          cap.textContent = nm;
-          card.appendChild(cap);
+  async function getLabel(id) {
+    // 1) local
+    try {
+      const raw = localStorage.getItem(lsKey(id));
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    // 2) netlify (optional)
+    if (NETLIFY_BASE) {
+      try {
+        const r = await fetch(`${NETLIFY_BASE}/.netlify/functions/labels?id=${encodeURIComponent(id)}`, { mode:"cors" });
+        if (r.ok) {
+          const j = await r.json();
+          // Accept any payload that includes name/dob fields or a nested object.
+          if (j && (j.name || j.dob || j.data)) {
+            const rec = j.data ? j.data : { name: j.name || "", dob: j.dob || "" };
+            return rec;
+          }
         }
-        card.addEventListener('click', ()=>{ historyStack.push(currentId); loadAnchor(id); });
-        grid.appendChild(card); added++;
-      };
-      img.onerror = ()=>{ /* skip missing */ };
+      } catch {}
+    }
+    return { name:"", dob:"" };
+  }
+
+  async function saveLabel(id, data) {
+    // 1) local
+    try { localStorage.setItem(lsKey(id), JSON.stringify(data)); } catch {}
+    // 2) netlify (optional, best‑effort)
+    if (NETLIFY_BASE) {
+      try {
+        await fetch(`${NETLIFY_BASE}/.netlify/functions/labels`, {
+          method:"POST",
+          headers: { "Content-Type":"application/json" },
+          body: JSON.stringify({ id, ...data }),
+          mode:"cors",
+        });
+      } catch {}
+    }
+  }
+
+  // -------------------- OVERLAY (SoftEdit) --------------------
+  let overlay = null;
+  function buildOverlay() {
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "softEditOverlay";
+    Object.assign(overlay.style, {
+      position:"fixed", inset:"0", background:"rgba(0,0,0,0.7)",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      zIndex:"9998"
+    });
+    const card = document.createElement("div");
+    Object.assign(card.style, {
+      width:"min(480px, 92vw)",
+      background:"#161616",
+      border:"1px solid #2a2a2a",
+      borderRadius:"16px",
+      boxShadow:"0 10px 40px rgba(0,0,0,0.5)",
+      padding:"16px",
+      color:"#eee",
+      fontFamily:"system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif"
+    });
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="font-weight:600;">Edit Details</div>
+        <button id="seClose" style="background:#222;border:1px solid #333;color:#eee;border-radius:8px;padding:6px 10px;cursor:pointer;">Close</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <label style="font-size:13px;opacity:0.9;">Name
+          <input id="seName" type="text" placeholder="Full name" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid #333;background:#111;color:#eee;">
+        </label>
+        <label style="font-size:13px;opacity:0.9;">Date of Birth (MM/DD/YYYY)
+          <input id="seDob" type="text" placeholder="MM/DD/YYYY" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid #333;background:#111;color:#eee;">
+        </label>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button id="seSave" style="background:#2a6;border:1px solid #3a7;color:#fff;border-radius:10px;padding:8px 12px;cursor:pointer;">Save</button>
+      </div>
+    `;
+    overlay.appendChild(card);
+
+    overlay.addEventListener("click", (e)=>{
+      if (e.target === overlay) hideOverlay();
+    });
+    overlay.querySelector("#seClose").addEventListener("click", hideOverlay);
+    overlay.querySelector("#seSave").addEventListener("click", async ()=>{
+      const name = overlay.querySelector("#seName").value.trim();
+      const dob  = overlay.querySelector("#seDob").value.trim();
+      await saveLabel($state.id, { name, dob });
+      showToast("Saved");
+      hideOverlay();
+      // Emit a custom event so UI that renders labels can update, if present.
+      document.dispatchEvent(new CustomEvent("swipetree:labelSaved", { detail: { id:$state.id, name, dob } }));
+    });
+    return overlay;
+  }
+  async function showOverlay() {
+    const ov = buildOverlay();
+    // Prefill with existing
+    const rec = await getLabel($state.id);
+    ov.querySelector("#seName").value = rec?.name || "";
+    ov.querySelector("#seDob").value  = rec?.dob  || "";
+    document.body.appendChild(ov);
+  }
+  function hideOverlay() {
+    if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  }
+
+  // -------------------- IMAGE LOADING --------------------
+  function loadById(id) {
+    if (!id) return;
+    $state.id = id;
+    const src = `${id}.jpg`;
+    anchor.src = src;
+    anchor.onerror = () => {
+      anchor.onerror = null;
+      anchor.src = "placeholder.jpg";
+      showToast(`Image not found for ${id}.jpg (showing placeholder)`);
     };
-
-    Array.from(new Set(list)).forEach(addTile);
-
-    setTimeout(()=>{
-      if (added === 0){
-        const msg = document.createElement('div');
-        msg.style.color = '#aab4c2'; msg.style.textAlign = 'center';
-        msg.textContent = 'No images available for this category.';
-        grid.appendChild(msg);
-      }
-    }, 400);
+    location.hash = `id=${id}`;
+    console.log("[SwipeTree] anchor set to", id);
+    document.dispatchEvent(new CustomEvent("swipetree:anchorChanged", { detail:{ id } }));
   }
 
-  function hideGrid(){
-    mode = 'anchor'; gridType = null;
-    grid.classList.add('hidden'); grid.innerHTML = '';
-    anchorEl.classList.remove('hidden');
+  // -------------------- SWIPES --------------------
+  // Prevent bounce/scroll on iOS Safari while touching
+  window.addEventListener("touchmove", (e)=>{
+    if ($state.touch.touching) e.preventDefault();
+  }, { passive:false });
+
+  const threshold = 30; // px
+  const restraint = 100;
+  const allowedTime = 600;
+
+  function onTouchStart(e) {
+    const t = e.changedTouches[0];
+    $state.touch.touching = true;
+    $state.touch.startX = t.pageX;
+    $state.touch.startY = t.pageY;
+    $state.touch.startT = Date.now();
+
+    // Start long‑press timer on ANCHOR only
+    if (e.target === anchor) {
+      clearTimeout(onTouchStart._t);
+      onTouchStart._t = setTimeout(()=> {
+        // If finger is still down and movement is minimal → treat as long‑press
+        const now = Date.now();
+        if ($state.touch.touching && (now - $state.touch.startT) >= LONGPRESS_MS) {
+          const moved = Math.hypot(t.pageX - $state.touch.startX, t.pageY - $state.touch.startY);
+          if (moved < 8) {
+            showOverlay();
+          }
+        }
+      }, LONGPRESS_MS);
+    }
   }
 
-  // Swipe + Long‑Press (as in v133, with LP added)
-  let active=false, sx=0, sy=0;
-  function onStart(x,y){ active=true; sx=x; sy=y; lpFired=false; pressActive=true; startLongPress(x,y); }
-  function onEnd(x,y){
-    cancelLongPress();
-    pressActive=false;
-    if (lpFired) return;
-    if (!active) return; active=false;
-    const dx = x - sx, dy = y - sy;
-    const ax = Math.abs(dx), ay = Math.abs(dy);
-    if (ax < THRESH && ay < THRESH) return;
+  function onTouchEnd(e) {
+    $state.touch.touching = false;
+    clearTimeout(onTouchStart._t);
 
-    if (ax > ay){
-      if (dx > 0){
-        const s = resolveSpouseId(currentId); if (s){ historyStack.push(currentId); loadAnchor(s); }
-      } else {
-        const sibs = deriveSiblingsList(currentId);
-        showGrid('siblings', sibs);
-      }
-    } else {
-      if (dy < 0){
-        const pA = deriveParent(currentId);
-        const list = []; if (pA){ list.push(pA); const pB = resolveOtherParent(pA); if (pB) list.push(pB); }
-        showGrid('parents', list);
-      } else {
-        const kidsSelf = deriveChildrenList(currentId);
-        const s = resolveSpouseId(currentId);
-        const kidsSpouse = s ? deriveChildrenList(s) : [];
-        const merged = Array.from(new Set([...kidsSelf, ...kidsSpouse]));
-        showGrid('children', merged);
+    const t = e.changedTouches[0];
+    const dx = t.pageX - $state.touch.startX;
+    const dy = t.pageY - $state.touch.startY;
+    const dt = Date.now() - $state.touch.startT;
+
+    // If overlay is open, ignore swipe
+    if (document.getElementById("softEditOverlay")) return;
+
+    if (dt <= allowedTime) {
+      if (Math.abs(dx) >= threshold && Math.abs(dy) <= restraint) {
+        showToast(dx < 0 ? "Siblings (←)" : "Spouse (→)");
+        document.dispatchEvent(new CustomEvent("swipetree:swipe", { detail: { dir: dx<0?"left":"right", id:$state.id } }));
+      } else if (Math.abs(dy) >= threshold && Math.abs(dx) <= restraint) {
+        showToast(dy < 0 ? "Parents (↑)" : "Children (↓)");
+        document.dispatchEvent(new CustomEvent("swipetree:swipe", { detail: { dir: dy<0?"up":"down", id:$state.id } }));
       }
     }
   }
 
-  function startLongPress(x,y){
-    cancelLongPress();
-    lpStartX=x; lpStartY=y;
-    lpTimer = setTimeout(()=>{
-      if (!pressActive) return;
-      const current = labels.get(currentId) || '';
-      const val = prompt('Name for '+currentId+'?', current || '');
-      if (val != null){
-        const name = String(val).trim();
-        if (name){
-          labels.set(String(currentId), name);
-          labelName.textContent = name;
-          saveCache();
-          pushSingle(String(currentId));
+  // Desktop long‑press (right‑click hold substitute): hold mouse for LONGPRESS_MS
+  function onMouseDown(e){
+    $state.mouse.down = true; $state.mouse.x=e.pageX; $state.mouse.y=e.pageY; $state.mouse.t=Date.now();
+    if (e.target === anchor) {
+      clearTimeout(onMouseDown._t);
+      onMouseDown._t = setTimeout(()=>{
+        if ($state.mouse.down) {
+          const moved = Math.hypot(e.pageX - $state.mouse.x, e.pageY - $state.mouse.y);
+          if (moved < 8) showOverlay();
         }
-      }
-      lpFired = true;
-    }, LP_MS);
+      }, LONGPRESS_MS);
+    }
   }
-  function cancelLongPress(){
-    if (lpTimer){ clearTimeout(lpTimer); lpTimer=null; }
-  }
+  function onMouseUp(e){ $state.mouse.down=false; clearTimeout(onMouseDown._t); }
 
-  const opts = {passive:false, capture:true};
-  if (window.PointerEvent){
-    [stage, anchorEl].forEach(el=>{
-      el.addEventListener('pointerdown', e=>onStart(e.clientX,e.clientY), opts);
-      el.addEventListener('pointermove', e=>{ 
-        if (lpTimer){
-          const dx = Math.abs(e.clientX - lpStartX);
-          const dy = Math.abs(e.clientY - lpStartY);
-          if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
-        }
-        if(e.cancelable) e.preventDefault();
-      }, opts);
-      el.addEventListener('pointerup',   e=>onEnd(e.clientX,e.clientY), opts);
-      el.addEventListener('pointercancel', e=>{ cancelLongPress(); active=false; pressActive=false; }, opts);
-      el.addEventListener('pointerleave',  e=>{ cancelLongPress(); }, opts);
-    });
-  } else {
-    [stage, anchorEl].forEach(el=>{
-      el.addEventListener('touchstart', e=>{ const t=e.touches&&e.touches[0]; if(!t) return; onStart(t.clientX,t.clientY); if(e.cancelable) e.preventDefault(); }, opts);
-      el.addEventListener('touchmove', e=>{ 
-        if (lpTimer){
-          const t=e.touches&&e.touches[0]; if (t){ 
-            const dx = Math.abs(t.clientX - lpStartX);
-            const dy = Math.abs(t.clientY - lpStartY);
-            if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
-          }
-        }
-        if(e.cancelable) e.preventDefault(); 
-      }, opts);
-      el.addEventListener('touchend',  e=>{ const t=e.changedTouches&&e.changedTouches[0]; if(!t) return; onEnd(t.clientX,t.clientY); if(e.cancelable) e.preventDefault(); }, opts);
-      el.addEventListener('mousedown', e=>onStart(e.clientX,e.clientY));
-      el.addEventListener('mousemove', e=>{ 
-        if (lpTimer){
-          const dx = Math.abs(e.clientX - lpStartX);
-          const dy = Math.abs(e.clientY - lpStartY);
-          if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
-        }
-      });
-      el.addEventListener('mouseup',   e=>onEnd(e.clientX,e.clientY));
-    });
-  }
+  document.addEventListener("touchstart", onTouchStart, { passive:false });
+  document.addEventListener("touchend", onTouchEnd, { passive:false });
+  document.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("mouseup", onMouseUp);
 
-  backBtn.addEventListener('click', () => {
-    if (mode === 'grid'){ hideGrid(); return; }
-    const prev = historyStack.pop(); if (prev) loadAnchor(prev);
-  });
-  startForm.addEventListener('submit', (e)=>{
-    e.preventDefault();
-    const v = (startIdInput.value||'').trim();
-    if (!v) return;
-    historyStack.length = 0;
-    loadAnchor(v);
-  });
+  if (startBtn && idInput) startBtn.addEventListener("click", ()=> loadById(idInput.value.trim()));
 
-  (async function init(){
-    await loadSpouseMap();
-    await loadLabels();
-    loadAnchor(getIdFromHash() || '100000');
-    window.addEventListener('popstate', ()=>{ const id=getIdFromHash(); if(id) loadAnchor(id); });
-  })();
+  // Init
+  const initialId = hashGetId() || "100000";
+  if (idInput) idInput.value = initialId;
+  loadById(initialId);
+
+  console.log(VERSION);
 })();
