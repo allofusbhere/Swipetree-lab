@@ -1,14 +1,12 @@
-# SwipeTree Lab — script.js (RC5 — Long‑Press + Hint)
+# SwipeTree Lab — script.js (RC6 — Hybrid Long‑Press for iPad 7th Gen)
 
-**Date:** 2025-09-02 16:40:58
+**Date:** 2025-09-02 16:51:39
 
-This build improves long‑press reliability using **Pointer Events** (works on iPad Safari, iOS/Android, desktop)
-and adds a small on‑screen hint: “Press & hold to edit”.
-
-- Hold ~600ms on the photo to edit (touch, pen, mouse).
-- Cancels if moved >10px or if the pointer leaves the image.
-- Also supports right‑click (context menu) and double‑click as fallbacks.
-- Keeps Netlify label sync + edge friction.
+This build hardens long‑press for **iPad 7th Gen / Safari (iPadOS 18.6.2)**:
+- Hybrid recognizer: **Pointer Events + Touch Events** (either path triggers edit).
+- Removes aggressive touch `preventDefault` from the surface so long‑press isn’t suppressed.
+- Injects CSS to reduce interference: `overscroll-behavior: none`, `-webkit-touch-callout: none`.
+- Keeps Netlify label sync + edge friction via CSS (no JS touch blocking).
 
 ## Deploy
-Replace `script.js` in the lab repo with this file and reload.
+Replace your lab `script.js` with this file and reload the Netlify URL.

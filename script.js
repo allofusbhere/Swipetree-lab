@@ -1,17 +1,31 @@
 
-/*! SwipeTree Lab — script.js (RC5 Long‑Press + Hint)
+/*! SwipeTree Lab — script.js (RC6 Hybrid Long‑Press)
  * - Visible anchor renderer
  * - Device‑independent labels (Netlify GET/POST)
- * - Edge friction
- * - Pointer Events long‑press + on-screen hint
+ * - Edge friction via CSS (no JS block that could suppress long‑press)
+ * - Hybrid long‑press (Pointer + Touch) with debug logs
  */
 (function(){
   // ---------- Config ----------
   const NETLIFY_ENDPOINT = '/.netlify/functions/labels';
   const IMAGE_BASE = 'https://allofusbhere.github.io/family-tree-images/';
   const EXT = '.jpg';
-  const LP_MS = 600;    // long‑press threshold
-  const MOVE_TOL = 10;  // px tolerance
+  const LP_MS = 550;    // long‑press threshold
+  const MOVE_TOL = 15;  // px tolerance
+
+  const log = (...a)=>console.log('[SwipeTree]', ...a);
+  const warn = (...a)=>console.warn('[SwipeTree]', ...a);
+
+  // ---------- Minimal CSS injection for friction + iPad friendliness ----------
+  const style = document.createElement('style');
+  style.textContent = `
+    html,body{height:100%;margin:0;overscroll-behavior:none;touch-action:manipulation;background:#000}
+    #app{min-height:100dvh;display:flex;align-items:center;justify-content:center}
+    #anchor{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none;
+            max-width:min(92vw,92vh);max-height:min(92vh,92vw);object-fit:contain}
+    #label{color:#fff;margin-top:12px;opacity:.9;font-family:system-ui,sans-serif;text-align:center}
+  `;
+  document.head.appendChild(style);
 
   // ---------- DOM bootstrap ----------
   let app = document.getElementById('app');
@@ -20,14 +34,6 @@
     app.id = 'app';
     document.body.appendChild(app);
   }
-  document.documentElement.style.touchAction = 'manipulation';
-  document.body.style.margin = '0';
-  document.body.style.overflow = 'hidden';
-  app.style.minHeight = '100dvh';
-  app.style.display = 'flex';
-  app.style.alignItems = 'center';
-  app.style.justifyContent = 'center';
-  app.style.background = '#000';
 
   const wrap = document.createElement('div');
   wrap.style.textAlign = 'center';
@@ -37,71 +43,17 @@
   img.id = 'anchor';
   img.alt = 'anchor';
   img.draggable = false;
-  img.style.maxWidth = 'min(92vw,92vh)';
-  img.style.maxHeight = 'min(92vh,92vw)';
-  img.style.objectFit = 'contain';
-  img.style.userSelect = 'none';
-  img.style.webkitUserDrag = 'none';
   wrap.appendChild(img);
 
   const label = document.createElement('div');
   label.id = 'label';
-  label.style.color = '#fff';
-  label.style.marginTop = '12px';
-  label.style.opacity = '0.9';
-  label.style.fontFamily = 'system-ui, sans-serif';
   wrap.appendChild(label);
-
-  // On-screen hint
-  const hint = document.createElement('div');
-  hint.textContent = 'Press & hold to edit';
-  hint.style.position = 'fixed';
-  hint.style.bottom = '24px';
-  hint.style.left = '50%';
-  hint.style.transform = 'translateX(-50%)';
-  hint.style.background = 'rgba(20,20,20,.85)';
-  hint.style.color = '#fff';
-  hint.style.padding = '8px 12px';
-  hint.style.borderRadius = '999px';
-  hint.style.fontFamily = 'system-ui, sans-serif';
-  hint.style.fontSize = '14px';
-  hint.style.opacity = '0';
-  hint.style.transition = 'opacity .25s ease';
-  document.body.appendChild(hint);
-  function showHint(ms=1500){ hint.style.opacity = '1'; setTimeout(()=> hint.style.opacity = '0', ms); }
-  // show once on load
-  setTimeout(()=>showHint(), 400);
-
-  // ---------- Edge friction (no page bounce) ----------
-  const surface = app;
-  document.addEventListener('gesturestart', e => e.preventDefault(), {passive:false});
-  document.addEventListener('gesturechange', e => e.preventDefault(), {passive:false});
-  document.addEventListener('gestureend', e => e.preventDefault(), {passive:false});
-  let active = false, touchId = null;
-  surface.addEventListener('touchstart', (e)=>{
-    if (e.touches.length === 1) { active = true; touchId = e.touches[0].identifier; e.preventDefault(); }
-    else { active = false; }
-  }, {passive:false});
-  surface.addEventListener('touchmove', (e)=>{ if (active) e.preventDefault(); }, {passive:false});
-  surface.addEventListener('touchend', (e)=>{
-    const still = Array.from(e.touches||[]).some(t => t.identifier === touchId);
-    if (!still) { active=false; touchId=null; }
-  }, {passive:false});
-  surface.addEventListener('touchcancel', ()=>{ active=false; touchId=null; }, {passive:false});
-  surface.addEventListener('wheel', (e)=>e.preventDefault(), {passive:false});
-  window.addEventListener('keydown', (e)=>{
-    const keys=['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '];
-    if (keys.includes(e.key)) e.preventDefault();
-  }, {passive:false});
 
   // ---------- Labels sync (Netlify + localStorage) ----------
   const LABELS_KEY = 'labels';
   const BACKUP_KEY = 'labels_backup';
   const SYNC_FLAG = '__labels_sync_inflight__';
   const POLL_MS = 30000;
-
-  const log = (...a)=>console.log('[SwipeTree]', ...a);
-  const warn = (...a)=>console.warn('[SwipeTree]', ...a);
 
   function readLocal(){
     try { return JSON.parse(localStorage.getItem(LABELS_KEY) || '{}'); }
@@ -203,41 +155,52 @@
   }
   window.addEventListener('hashchange', render);
 
-  // ---------- Pointer Events Long‑Press ----------
+  // ---------- Hybrid Long‑Press (Pointer + Touch) ----------
   let pressTimer = null;
   let sx = 0, sy = 0;
   let pressed = false;
 
-  function startPress(x,y){
+  function startPress(x,y, src){
     cancelPress();
-    sx=x; sy=y;
-    pressed = true;
+    sx=x; sy=y; pressed = true;
+    log('LP start via', src);
     pressTimer = setTimeout(()=>{
       pressTimer = null;
-      if (pressed) doEdit();
+      if (pressed) { log('LP trigger via', src); doEdit(); }
     }, LP_MS);
   }
   function movePress(x,y){
     if (!pressed) return;
     const dx = Math.abs(x - sx);
     const dy = Math.abs(y - sy);
-    if (dx > MOVE_TOL || dy > MOVE_TOL) cancelPress();
+    if (dx > MOVE_TOL || dy > MOVE_TOL) { log('LP cancel: move'); cancelPress(); }
   }
-  function cancelPress(){
-    pressed = false;
-    if (pressTimer){ clearTimeout(pressTimer); pressTimer = null; }
-  }
+  function cancelPress(){ pressed = false; if (pressTimer){ clearTimeout(pressTimer); pressTimer=null; } }
 
-  // Use Pointer Events (touch/mouse/pen unified)
+  // Pointer path
   img.addEventListener('pointerdown', (e)=>{
-    if (e.pointerType === 'mouse' && e.button !== 0) return; // left only
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     img.setPointerCapture?.(e.pointerId);
-    startPress(e.clientX, e.clientY);
+    startPress(e.clientX, e.clientY, 'pointer');
   });
   img.addEventListener('pointermove', (e)=> movePress(e.clientX, e.clientY));
   img.addEventListener('pointerup', cancelPress);
   img.addEventListener('pointercancel', cancelPress);
   img.addEventListener('pointerleave', cancelPress);
+
+  // Touch fallback (explicit)
+  img.addEventListener('touchstart', (e)=>{
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    startPress(t.clientX, t.clientY, 'touch');
+  }, {passive:true}); // passive true: don't block scrolling; CSS already disables overscroll
+  img.addEventListener('touchmove', (e)=>{
+    if (!pressed) return;
+    const t = e.touches[0];
+    movePress(t.clientX, t.clientY);
+  }, {passive:true});
+  img.addEventListener('touchend', cancelPress, {passive:true});
+  img.addEventListener('touchcancel', cancelPress, {passive:true});
 
   // Fallbacks
   img.addEventListener('contextmenu', (e)=>{ e.preventDefault(); doEdit(); });
