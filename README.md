@@ -1,14 +1,14 @@
-# SwipeTree Lab — script.js (RC4 — Long‑Press)
+# SwipeTree Lab — script.js (RC5 — Long‑Press + Hint)
 
-**Date:** 2025-09-02 16:30:23
+**Date:** 2025-09-02 16:40:58
 
-This build switches editing to **long‑press** (no double‑tap needed), fixes the iPad context‑menu issue,
-and keeps the Netlify label sync + edge friction.
+This build improves long‑press reliability using **Pointer Events** (works on iPad Safari, iOS/Android, desktop)
+and adds a small on‑screen hint: “Press & hold to edit”.
 
-- Press & hold on the photo for ~600ms to edit (iPad/phone).
-- Desktop: hold mouse down ~600ms or use right‑click.
+- Hold ~600ms on the photo to edit (touch, pen, mouse).
+- Cancels if moved >10px or if the pointer leaves the image.
+- Also supports right‑click (context menu) and double‑click as fallbacks.
+- Keeps Netlify label sync + edge friction.
 
 ## Deploy
-1) Replace your lab `script.js` with this file.
-2) Open your Netlify lab URL (e.g., https://elegant-panda-0f4cac.netlify.app/index.html#id=100000).
-3) Long‑press the image → prompts appear; save; reload to confirm label shows.
+Replace `script.js` in the lab repo with this file and reload.
