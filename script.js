@@ -1,222 +1,352 @@
 
-/*! SwipeTree Lab — script.js (RC6 Hybrid Long‑Press)
- * - Visible anchor renderer
- * - Device‑independent labels (Netlify GET/POST)
- * - Edge friction via CSS (no JS block that could suppress long‑press)
- * - Hybrid long‑press (Pointer + Touch) with debug logs
- */
+/* SwipeTree v133 + Netlify labels + Long‑Press (RC9 absolute-endpoint fallback) */
 (function(){
-  // ---------- Config ----------
-  const NETLIFY_ENDPOINT = '/.netlify/functions/labels';
+  'use strict';
+
   const IMAGE_BASE = 'https://allofusbhere.github.io/family-tree-images/';
-  const EXT = '.jpg';
-  const LP_MS = 550;    // long‑press threshold
-  const MOVE_TOL = 15;  // px tolerance
+  const MAX_COUNT = 9;
+  const THRESH = 28;
+  const LP_MS = 600;
+  const MOVE_TOL = 12;
 
-  const log = (...a)=>console.log('[SwipeTree]', ...a);
-  const warn = (...a)=>console.warn('[SwipeTree]', ...a);
-
-  // ---------- Minimal CSS injection for friction + iPad friendliness ----------
-  const style = document.createElement('style');
-  style.textContent = `
-    html,body{height:100%;margin:0;overscroll-behavior:none;touch-action:manipulation;background:#000}
-    #app{min-height:100dvh;display:flex;align-items:center;justify-content:center}
-    #anchor{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none;
-            max-width:min(92vw,92vh);max-height:min(92vh,92vw);object-fit:contain}
-    #label{color:#fff;margin-top:12px;opacity:.9;font-family:system-ui,sans-serif;text-align:center}
-  `;
-  document.head.appendChild(style);
-
-  // ---------- DOM bootstrap ----------
-  let app = document.getElementById('app');
-  if (!app) {
-    app = document.createElement('div');
-    app.id = 'app';
-    document.body.appendChild(app);
-  }
-
-  const wrap = document.createElement('div');
-  wrap.style.textAlign = 'center';
-  app.appendChild(wrap);
-
-  const img = document.createElement('img');
-  img.id = 'anchor';
-  img.alt = 'anchor';
-  img.draggable = false;
-  wrap.appendChild(img);
-
-  const label = document.createElement('div');
-  label.id = 'label';
-  wrap.appendChild(label);
-
-  // ---------- Labels sync (Netlify + localStorage) ----------
-  const LABELS_KEY = 'labels';
-  const BACKUP_KEY = 'labels_backup';
-  const SYNC_FLAG = '__labels_sync_inflight__';
+  // If not on Netlify, use absolute hostname so GitHub Pages can still reach functions
+  const NETLIFY_HOST = 'elegant-panda-0f4cac.netlify.app';
+  const ENDPOINT = (location.hostname.includes('netlify.app') ? '/.netlify/functions/labels'
+                                                             : `https://${NETLIFY_HOST}/.netlify/functions/labels`);
+  const CACHE_KEY = 'labels_cache_v1';
   const POLL_MS = 30000;
 
-  function readLocal(){
-    try { return JSON.parse(localStorage.getItem(LABELS_KEY) || '{}'); }
-    catch(e){ warn('bad local labels', e); return {}; }
+  const stage = document.getElementById('stage');
+  const anchorEl = document.getElementById('anchor');
+  const grid = document.getElementById('grid');
+  const backBtn = document.getElementById('backBtn');
+  const startForm = document.getElementById('startForm');
+  const startIdInput = document.getElementById('startId');
+  const labelName = document.getElementById('labelName');
+
+  const spouses = new Map();
+  const labels = new Map();
+  const historyStack = [];
+  let currentId = null;
+  let mode = 'anchor';
+  let gridType = null;
+  let lpTimer = null, lpStartX=0, lpStartY=0, lpFired=false, pressActive=false;
+
+  function pow10(n){ return Math.pow(10, n); }
+  function idMain(id){ return String(id).split('.')[0]; }
+  function imgUrlForId(id){ return IMAGE_BASE + String(id) + '.jpg'; }
+  function trailingZerosCount(idStr){
+    const main = idMain(idStr);
+    let count = 0;
+    for (let i = main.length - 1; i >= 0; i--) { if (main[i] === '0') count++; else break; }
+    return count;
   }
-  function writeLocal(map){
-    try {
-      localStorage.setItem(LABELS_KEY, JSON.stringify(map||{}));
-      localStorage.setItem(BACKUP_KEY, JSON.stringify({at:Date.now(), data: map||{}}));
-    } catch(e){ warn('write local failed', e); }
+  function saveCache(){
+    try{ localStorage.setItem(CACHE_KEY, JSON.stringify(Object.fromEntries(labels))); }catch{}
+  }
+  function mergeIntoLabels(obj){
+    if (!obj || typeof obj !== 'object') return;
+    for (const [k,v] of Object.entries(obj)){ if (v!=null && v!=='') labels.set(String(k), String(v)); }
   }
   async function fetchRemote(){
-    try {
-      const r = await fetch(NETLIFY_ENDPOINT, {method:'GET', headers:{accept:'application/json'}});
-      if (!r.ok) throw new Error('GET '+r.status);
+    try{
+      const r = await fetch(ENDPOINT, {method:'GET', headers:{accept:'application/json'}});
+      if (!r.ok) throw 0;
       const data = await r.json();
-      return data && (data.labels || data) || {};
-    } catch(e){ warn('fetch remote failed', e); return null; }
+      return (data && (data.labels || data)) || {};
+    }catch{ return null; }
   }
-  async function pushRemote(map){
-    try {
-      const r = await fetch(NETLIFY_ENDPOINT, {
+  async function pushRemoteMap(map){
+    try{
+      const r = await fetch(ENDPOINT, {
         method:'POST',
         headers:{'content-type':'application/json'},
-        body: JSON.stringify({op:'upsert_all', labels: map||{}})
+        body: JSON.stringify({op:'upsert_all', labels: map})
       });
-      if (!r.ok) throw new Error('POST '+r.status);
-      return true;
-    } catch(e){ warn('push remote failed', e); return false; }
+      return r.ok;
+    }catch{ return false; }
   }
-  function mergeLabels(a,b){
-    const out = {...(a||{})};
-    for(const [id,rec] of Object.entries(b||{})){
-      out[id] = {...(out[id]||{}), ...(rec||{})};
-    }
-    return out;
+  async function pushSingle(id){
+    const body = {}; body[id] = labels.get(String(id)) || '';
+    await pushRemoteMap(body);
   }
 
-  const origSetItem = localStorage.setItem.bind(localStorage);
-  localStorage.setItem = function(k,v){
-    origSetItem(k,v);
-    if (k !== LABELS_KEY) return;
-    try {
-      const current = JSON.parse(v||'{}');
-      queueMicrotask(()=>{
-        if (window[SYNC_FLAG]) return;
-        window[SYNC_FLAG] = true;
-        pushRemote(current).finally(()=>{ window[SYNC_FLAG]=false; });
-      });
-    } catch {}
-  };
-
-  window.setLabel = function(id, patch){
-    if (!id) return;
-    const map = readLocal();
-    map[id] = {...(map[id]||{}), ...(patch||{})};
-    writeLocal(map);
-    render(); // reflect immediately
-  };
-  window.getLabel = function(id){ return readLocal()[id] || null; };
-
-  (async function initSync(){
-    log('Labels: init sync');
-    const local = readLocal();
-    const remote = await fetchRemote();
-    if (remote) {
-      const merged = mergeLabels(remote, local);
-      writeLocal(merged);
-      await pushRemote(merged);
-      log('Labels synced; entries:', Object.keys(merged).length);
-    } else {
-      writeLocal(local);
-      log('Offline; using local labels');
-    }
-    setInterval(async()=>{
-      const r = await fetchRemote();
-      if (r) {
-        const merged = mergeLabels(r, readLocal());
-        writeLocal(merged);
-        log('Periodic merge; entries:', Object.keys(merged).length);
-        render();
+  async function loadSpouseMap(){
+    try{
+      const res = await fetch('spouse_link.json?v=' + Date.now(), {cache:'no-store'});
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)){
+        for (const pair of data){
+          if (Array.isArray(pair) && pair.length >= 2){
+            const a = String(pair[0]), b = String(pair[1]);
+            spouses.set(a,b); spouses.set(b,a);
+          }
+        }
+      }else if (data && typeof data === 'object'){
+        for (const [a,b] of Object.entries(data)){ spouses.set(String(a), String(b)); }
       }
+    }catch(e){ console.warn('spouse_link.json not loaded', e); }
+  }
+
+  async function loadLabels(){
+    try{
+      const res = await fetch('labels.json?v=' + Date.now(), {cache:'no-store'});
+      if (res.ok){
+        const data = await res.json();
+        if (data && typeof data === 'object'){ mergeIntoLabels(data); }
+      }
+    }catch(e){ console.warn('labels.json not loaded', e); }
+    try{
+      if (window.LABELS && typeof window.LABELS === 'object'){ mergeIntoLabels(window.LABELS); }
+    }catch{}
+
+    try{
+      const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+      mergeIntoLabels(cache);
+    }catch{}
+
+    const remote = await fetchRemote();
+    if (remote){ mergeIntoLabels(remote); saveCache(); }
+
+    setInterval(async ()=>{
+      const r = await fetchRemote();
+      if (r){ mergeIntoLabels(r); saveCache(); if (currentId) labelName.textContent = labels.get(currentId) || ''; }
     }, POLL_MS);
-  })();
-
-  // ---------- Anchor renderer + label UI ----------
-  function idFromHash(){
-    const m = location.hash.match(/id=([\d.]+)/);
-    return (m && m[1]) || '100000';
   }
-  function imgUrl(id){ return IMAGE_BASE + id + EXT; }
 
-  function render(){
-    const id = idFromHash();
-    img.src = imgUrl(id);
-    img.alt = 'ID '+id;
-    const rec = window.getLabel(id);
-    label.textContent = rec ? `${rec.name || ''}${rec.dob ? ' ('+rec.dob+')' : ''}`.trim() : '';
+  function deriveParent(idStr){
+    const main = idMain(idStr);
+    const tz = trailingZerosCount(main);
+    const step = pow10(tz + 1);
+    const base = parseInt(main, 10);
+    const head = Math.floor(base / step) * step;
+    if (head === 0 || head === base) return null;
+    return String(head);
   }
-  window.addEventListener('hashchange', render);
+  function deriveChildrenList(idStr){
+    const main = idMain(idStr);
+    const tz = trailingZerosCount(main);
+    if (tz < 1) return [];
+    const step = pow10(tz - 1);
+    const base = parseInt(main, 10);
+    const arr = [];
+    for (let n=1; n<=MAX_COUNT; n++){ arr.push(String(base + n*step)); }
+    return arr;
+  }
+  function deriveSiblingsList(idStr){
+    const parent = deriveParent(idStr);
+    if (parent){
+      const ptz = trailingZerosCount(parent);
+      if (ptz < 1) return [];
+      const step = pow10(ptz - 1);
+      const pbase = parseInt(idMain(parent), 10);
+      const me = parseInt(idMain(idStr), 10);
+      const arr = [];
+      for (let n=1; n<=MAX_COUNT; n++){
+        const sib = pbase + n*step;
+        if (sib !== me) arr.push(String(sib));
+      }
+      return arr;
+    }
+    const main = idMain(idStr);
+    const tz = trailingZerosCount(main);
+    const step = pow10(tz);
+    const cohort = [];
+    for (let k=1; k<=9; k++){ cohort.push(String(k*step)); }
+    const me = String(parseInt(main,10));
+    return cohort.filter(x => x !== me);
+  }
+  function resolveSpouseId(idStr){
+    const ex = spouses.get(String(idStr));
+    if (ex) return ex;
+    if (String(idStr).includes('.1')) return idMain(idStr);
+    return String(idStr)+'.1';
+  }
+  function resolveOtherParent(parentId){
+    const s = spouses.get(String(parentId));
+    if (s) return s;
+    if (!String(parentId).includes('.1')) return String(parentId)+'.1';
+    return idMain(parentId);
+  }
 
-  // ---------- Hybrid Long‑Press (Pointer + Touch) ----------
-  let pressTimer = null;
-  let sx = 0, sy = 0;
-  let pressed = false;
+  async function loadAnchor(id){
+    currentId = String(id);
+    anchorEl.src = imgUrlForId(currentId);
+    anchorEl.setAttribute('data-id', currentId);
+    setIdInHash(currentId);
+    hideGrid();
+    labelName.textContent = labels.get(currentId) || '';
+  }
 
-  function startPress(x,y, src){
-    cancelPress();
-    sx=x; sy=y; pressed = true;
-    log('LP start via', src);
-    pressTimer = setTimeout(()=>{
-      pressTimer = null;
-      if (pressed) { log('LP trigger via', src); doEdit(); }
+  function setIdInHash(id){
+    const newHash = `#id=${id}`;
+    if (location.hash !== newHash){ history.pushState({id}, '', newHash); }
+  }
+  function getIdFromHash(){
+    const m = location.hash.match(/id=([0-9.]+)/);
+    return m ? m[1] : null;
+  }
+
+  function showGrid(type, list){
+    mode = 'grid'; gridType = type;
+    anchorEl.classList.add('hidden');
+    grid.className = 'grid' + (type === 'parents' ? ' parents' : '');
+    grid.innerHTML = ''; grid.classList.remove('hidden');
+
+    let added = 0;
+    const addTile = (id)=>{
+      const card = document.createElement('div'); card.className = 'card';
+      const img = document.createElement('img'); img.alt = type; img.loading = 'eager';
+      img.src = imgUrlForId(id);
+      img.onload = ()=>{
+        card.appendChild(img);
+        const nm = labels.get(String(id));
+        if (nm){
+          const cap = document.createElement('div');
+          cap.className = 'cardLabel';
+          cap.textContent = nm;
+          card.appendChild(cap);
+        }
+        card.addEventListener('click', ()=>{ historyStack.push(currentId); loadAnchor(id); });
+        grid.appendChild(card); added++;
+      };
+      img.onerror = ()=>{ /* skip missing */ };
+    };
+
+    Array.from(new Set(list)).forEach(addTile);
+
+    setTimeout(()=>{
+      if (added === 0){
+        const msg = document.createElement('div');
+        msg.style.color = '#aab4c2'; msg.style.textAlign = 'center';
+        msg.textContent = 'No images available for this category.';
+        grid.appendChild(msg);
+      }
+    }, 400);
+  }
+
+  function hideGrid(){
+    mode = 'anchor'; gridType = null;
+    grid.classList.add('hidden'); grid.innerHTML = '';
+    anchorEl.classList.remove('hidden');
+  }
+
+  // Swipe + Long‑Press (as in v133, with LP added)
+  let active=false, sx=0, sy=0;
+  function onStart(x,y){ active=true; sx=x; sy=y; lpFired=false; pressActive=true; startLongPress(x,y); }
+  function onEnd(x,y){
+    cancelLongPress();
+    pressActive=false;
+    if (lpFired) return;
+    if (!active) return; active=false;
+    const dx = x - sx, dy = y - sy;
+    const ax = Math.abs(dx), ay = Math.abs(dy);
+    if (ax < THRESH && ay < THRESH) return;
+
+    if (ax > ay){
+      if (dx > 0){
+        const s = resolveSpouseId(currentId); if (s){ historyStack.push(currentId); loadAnchor(s); }
+      } else {
+        const sibs = deriveSiblingsList(currentId);
+        showGrid('siblings', sibs);
+      }
+    } else {
+      if (dy < 0){
+        const pA = deriveParent(currentId);
+        const list = []; if (pA){ list.push(pA); const pB = resolveOtherParent(pA); if (pB) list.push(pB); }
+        showGrid('parents', list);
+      } else {
+        const kidsSelf = deriveChildrenList(currentId);
+        const s = resolveSpouseId(currentId);
+        const kidsSpouse = s ? deriveChildrenList(s) : [];
+        const merged = Array.from(new Set([...kidsSelf, ...kidsSpouse]));
+        showGrid('children', merged);
+      }
+    }
+  }
+
+  function startLongPress(x,y){
+    cancelLongPress();
+    lpStartX=x; lpStartY=y;
+    lpTimer = setTimeout(()=>{
+      if (!pressActive) return;
+      const current = labels.get(currentId) || '';
+      const val = prompt('Name for '+currentId+'?', current || '');
+      if (val != null){
+        const name = String(val).trim();
+        if (name){
+          labels.set(String(currentId), name);
+          labelName.textContent = name;
+          saveCache();
+          pushSingle(String(currentId));
+        }
+      }
+      lpFired = true;
     }, LP_MS);
   }
-  function movePress(x,y){
-    if (!pressed) return;
-    const dx = Math.abs(x - sx);
-    const dy = Math.abs(y - sy);
-    if (dx > MOVE_TOL || dy > MOVE_TOL) { log('LP cancel: move'); cancelPress(); }
+  function cancelLongPress(){
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer=null; }
   }
-  function cancelPress(){ pressed = false; if (pressTimer){ clearTimeout(pressTimer); pressTimer=null; } }
 
-  // Pointer path
-  img.addEventListener('pointerdown', (e)=>{
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    img.setPointerCapture?.(e.pointerId);
-    startPress(e.clientX, e.clientY, 'pointer');
+  const opts = {passive:false, capture:true};
+  if (window.PointerEvent){
+    [stage, anchorEl].forEach(el=>{
+      el.addEventListener('pointerdown', e=>onStart(e.clientX,e.clientY), opts);
+      el.addEventListener('pointermove', e=>{ 
+        if (lpTimer){
+          const dx = Math.abs(e.clientX - lpStartX);
+          const dy = Math.abs(e.clientY - lpStartY);
+          if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
+        }
+        if(e.cancelable) e.preventDefault();
+      }, opts);
+      el.addEventListener('pointerup',   e=>onEnd(e.clientX,e.clientY), opts);
+      el.addEventListener('pointercancel', e=>{ cancelLongPress(); active=false; pressActive=false; }, opts);
+      el.addEventListener('pointerleave',  e=>{ cancelLongPress(); }, opts);
+    });
+  } else {
+    [stage, anchorEl].forEach(el=>{
+      el.addEventListener('touchstart', e=>{ const t=e.touches&&e.touches[0]; if(!t) return; onStart(t.clientX,t.clientY); if(e.cancelable) e.preventDefault(); }, opts);
+      el.addEventListener('touchmove', e=>{ 
+        if (lpTimer){
+          const t=e.touches&&e.touches[0]; if (t){ 
+            const dx = Math.abs(t.clientX - lpStartX);
+            const dy = Math.abs(t.clientY - lpStartY);
+            if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
+          }
+        }
+        if(e.cancelable) e.preventDefault(); 
+      }, opts);
+      el.addEventListener('touchend',  e=>{ const t=e.changedTouches&&e.changedTouches[0]; if(!t) return; onEnd(t.clientX,t.clientY); if(e.cancelable) e.preventDefault(); }, opts);
+      el.addEventListener('mousedown', e=>onStart(e.clientX,e.clientY));
+      el.addEventListener('mousemove', e=>{ 
+        if (lpTimer){
+          const dx = Math.abs(e.clientX - lpStartX);
+          const dy = Math.abs(e.clientY - lpStartY);
+          if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
+        }
+      });
+      el.addEventListener('mouseup',   e=>onEnd(e.clientX,e.clientY));
+    });
+  }
+
+  backBtn.addEventListener('click', () => {
+    if (mode === 'grid'){ hideGrid(); return; }
+    const prev = historyStack.pop(); if (prev) loadAnchor(prev);
   });
-  img.addEventListener('pointermove', (e)=> movePress(e.clientX, e.clientY));
-  img.addEventListener('pointerup', cancelPress);
-  img.addEventListener('pointercancel', cancelPress);
-  img.addEventListener('pointerleave', cancelPress);
+  startForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const v = (startIdInput.value||'').trim();
+    if (!v) return;
+    historyStack.length = 0;
+    loadAnchor(v);
+  });
 
-  // Touch fallback (explicit)
-  img.addEventListener('touchstart', (e)=>{
-    if (e.touches.length !== 1) return;
-    const t = e.touches[0];
-    startPress(t.clientX, t.clientY, 'touch');
-  }, {passive:true}); // passive true: don't block scrolling; CSS already disables overscroll
-  img.addEventListener('touchmove', (e)=>{
-    if (!pressed) return;
-    const t = e.touches[0];
-    movePress(t.clientX, t.clientY);
-  }, {passive:true});
-  img.addEventListener('touchend', cancelPress, {passive:true});
-  img.addEventListener('touchcancel', cancelPress, {passive:true});
-
-  // Fallbacks
-  img.addEventListener('contextmenu', (e)=>{ e.preventDefault(); doEdit(); });
-  img.addEventListener('dblclick', (e)=>{ e.preventDefault(); doEdit(); });
-
-  function doEdit(){
-    cancelPress();
-    const id = idFromHash();
-    const current = window.getLabel(id) || {};
-    const name = prompt('Name for '+id+'?', current.name || '');
-    const dob  = prompt('DOB for '+id+'? (optional)', current.dob || '');
-    if ((name && name.trim()) || (dob && dob.trim())) {
-      window.setLabel(id, {name: name.trim(), dob: dob.trim()});
-    }
-  }
-
-  // initial draw
-  render();
+  (async function init(){
+    await loadSpouseMap();
+    await loadLabels();
+    loadAnchor(getIdFromHash() || '100000');
+    window.addEventListener('popstate', ()=>{ const id=getIdFromHash(); if(id) loadAnchor(id); });
+  })();
 })();
