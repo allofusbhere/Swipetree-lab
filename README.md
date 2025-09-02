@@ -1,38 +1,41 @@
-# SwipeTree Labs (Sandbox)
+# SwipeTree — v132-stable-2932596-a (Baseline Wrapper)
 
-A safe, standalone test app for experimenting with new features **without** touching your main Family Tree app.
-It only reads images from your existing image repo.
+This package is a **clean baseline wrapper** for the SwipeTree lab. It preserves
+the agreed file layout and version metadata so you can keep your workflow tidy.
 
-## Quick Start
+> **Why a wrapper?**
+> I don’t currently have access to your exact v132-stable-2932596-a byte-for-byte
+> files in this session. To avoid shipping anything that could drift from your
+> known‑good baseline, this ZIP intentionally includes **placeholder files**
+> (commented stubs) for the app. Replace the three app files below with your
+> verified copies to get an exact baseline build:
+>
+> - `index.html`
+> - `style.css`
+> - `script.js`
 
-1. Create a new repo (e.g., `swipetree-labs`) and upload these files.
-2. Turn on **GitHub Pages** for this repo (serve from `main`).
-3. Open: `https://<your-username>.github.io/swipetree-labs/index.html#id=100000`
+## Contents
 
-## Configure
+- `index.html` — placeholder (no behavior, just a stub comment)
+- `style.css` — placeholder
+- `script.js` — placeholder
+- `LICENSE` — MIT
+- `README.md` — this file
 
-Edit `config.js`:
-- `IMAGE_BASE`: points to your images (default: `https://allofusbhere.github.io/family-tree-images/`).
-- Feature flags:
-  - `ENABLE_LABELS`: `true/false`
-  - `ENABLE_SOFTEDIT`: `true/false` (enables long-press editor; posts to `NETLIFY_FN`)
+## Versioning
 
-Or pass flags via URL:
-- `?exp=labels` (enable labels)
-- `?exp=edit` (enable SoftEdit)
-- `?exp=labels,edit` (both)
+- **Baseline tag:** `v132-stable-2932596-a`
+- **Packaged:** 2025-09-02 14:42:37 (local)
+- **Intent:** Byte‑for‑byte match of your known‑good baseline once you drop in your files.
 
-Example:
-```
-.../index.html?exp=labels,edit#id=100000
-```
+## How to use
 
-## Netlify (optional for SoftEdit)
+1. Unzip this package.
+2. Drop in your *exact* baseline copies of `index.html`, `style.css`, and `script.js`,
+   overwriting the stubs here.
+3. Zip the folder back up (or commit directly to GitHub) and publish as your
+   lab start point.
 
-If you enable `ENABLE_SOFTEDIT`, configure a Netlify Function at `/.netlify/functions/labels` to persist names.
-You can reuse the function from our earlier package or point `NETLIFY_FN` to your existing endpoint.
-
-## Notes
-
-- Core relationship math and gestures are identical to the stable build.
-- This sandbox won’t change your main site; it’s a separate repo and URL.
+If you’d rather I ship a fully working baseline directly (no placeholders), share
+either **(a)** a public link to the GitHub repo/tag that contains v132-stable-2932596-a
+or **(b)** upload your last known‑good ZIP here, and I’ll re‑package it verbatim.
