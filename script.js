@@ -1,31 +1,31 @@
 
-/*! SwipeTree Lab — script.js (RC2)
- * Single-file integration:
- *  - visible anchor renderer (image + label)
- *  - device-independent labels via Netlify (GET/POST)
- *  - basic edge-friction so iPad doesn't bounce
+/*! SwipeTree Lab — script.js (RC4 Long‑Press)
+ * - Visible anchor renderer
+ * - Device‑independent labels (Netlify GET/POST)
+ * - Edge friction
+ * - Long‑press to edit (mobile & desktop)
  */
-
 (function(){
   // ---------- Config ----------
   const NETLIFY_ENDPOINT = '/.netlify/functions/labels';
   const IMAGE_BASE = 'https://allofusbhere.github.io/family-tree-images/';
   const EXT = '.jpg';
 
-  // ---------- DOM bootstrap (works even if index.html is minimal) ----------
+  // ---------- DOM bootstrap ----------
   let app = document.getElementById('app');
   if (!app) {
     app = document.createElement('div');
     app.id = 'app';
     document.body.appendChild(app);
   }
+  document.documentElement.style.touchAction = 'manipulation';
+  document.body.style.margin = '0';
+  document.body.style.overflow = 'hidden';
   app.style.minHeight = '100dvh';
   app.style.display = 'flex';
   app.style.alignItems = 'center';
   app.style.justifyContent = 'center';
   app.style.background = '#000';
-  document.body.style.margin = '0';
-  document.body.style.overflow = 'hidden';
 
   const wrap = document.createElement('div');
   wrap.style.textAlign = 'center';
@@ -33,6 +33,8 @@
 
   const img = document.createElement('img');
   img.id = 'anchor';
+  img.alt = 'anchor';
+  img.draggable = false;
   img.style.maxWidth = 'min(92vw,92vh)';
   img.style.maxHeight = 'min(92vh,92vw)';
   img.style.objectFit = 'contain';
@@ -179,22 +181,64 @@
   }
   window.addEventListener('hashchange', render);
 
-  // double-tap / dblclick to edit
-  let lastTap = 0;
-  img.addEventListener('touchend', (e)=>{
-    const now = Date.now();
-    if (now - lastTap < 350) { e.preventDefault(); edit(); }
-    lastTap = now;
-  }, {passive:false});
-  img.addEventListener('dblclick', (e)=>{ e.preventDefault(); edit(); });
+  // ---------- Long‑press to edit ----------
+  const LP_MS = 600;           // required press length
+  const MOVE_TOL = 10;         // px tolerance before cancel
+  let lpTimer = null;
+  let startX=0, startY=0;
+  function startLongPress(x,y, cancelFn){
+    clearTimeout(lpTimer);
+    startX=x; startY=y;
+    lpTimer = setTimeout(()=>{ lpTimer=null; cancelFn(); }, LP_MS);
+  }
+  function cancelLongPress(){
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer=null; }
+  }
 
-  function edit(){
+  function doEdit(){
     const id = idFromHash();
     const current = window.getLabel(id) || {};
     const name = prompt('Name for '+id+'?', current.name || '');
     const dob  = prompt('DOB for '+id+'? (optional)', current.dob || '');
-    if (name || dob) window.setLabel(id, {name, dob});
+    if ((name && name.trim()) || (dob && dob.trim())) {
+      window.setLabel(id, {name: name.trim(), dob: dob.trim()});
+    }
   }
+
+  // Mobile touch
+  img.addEventListener('touchstart', (e)=>{
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    e.preventDefault(); // helps avoid iOS double‑tap zoom / highlight
+    startLongPress(t.clientX, t.clientY, doEdit);
+  }, {passive:false});
+
+  img.addEventListener('touchmove', (e)=>{
+    if (!lpTimer) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - startX);
+    const dy = Math.abs(t.clientY - startY);
+    if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
+  }, {passive:false});
+
+  img.addEventListener('touchend', cancelLongPress, {passive:false});
+  img.addEventListener('touchcancel', cancelLongPress, {passive:false});
+
+  // Desktop mouse
+  img.addEventListener('mousedown', (e)=>{
+    if (e.button !== 0) return; // left button only
+    startLongPress(e.clientX, e.clientY, doEdit);
+  });
+  window.addEventListener('mousemove', (e)=>{
+    if (!lpTimer) return;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    if (dx > MOVE_TOL || dy > MOVE_TOL) cancelLongPress();
+  });
+  window.addEventListener('mouseup', cancelLongPress);
+
+  // Right‑click context menu also triggers edit (useful on desktop/iPad with trackpad)
+  img.addEventListener('contextmenu', (e)=>{ e.preventDefault(); doEdit(); });
 
   // initial draw
   render();
