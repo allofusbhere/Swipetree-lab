@@ -1,18 +1,33 @@
-# SwipeTree Lab — Quick Wins RC1 (No-Edit Upload)
+# SwipeTree Lab — Device‑Independent Labels (RC1)
 
-**Date:** 2025-09-02 15:00:35
+**Date:** 2025-09-02 15:10:11
 
-This is a *drop-in replacement* for the lab repo core files so you **do not need to edit anything**.
+This is a **drop-in** `script.js` replacement for the **lab repo** that upgrades labeling
+to be **device‑independent** using your Netlify function at `/.netlify/functions/labels`.
+No HTML edits are required.
 
-Included:
-- `index.html` — same structure but with **inline** edge-friction + anchor-centering helpers.
-- `style.css` — unchanged behavior; quick-win CSS is injected inline in index.html.
-- `script.js` — placeholder (safe). If your repo already has a working `script.js`, keep yours.
+## What it does
+- On load, it **fetches** labels from the Netlify function and merges them into localStorage.
+- When labels are updated, it **POSTs** them back to the function so other devices see the same data.
+- It preserves your existing localStorage behavior for backward compatibility.
 
-## How to use
-1. Back up your current lab files.
-2. Replace **only** `index.html` with the one in this ZIP. (You may ignore the `script.js` here if you already have a working one.)
-3. Keep your existing `script.js`, `style.css`, `config.js`, `labels.json`, `spouse_link.json` etc.
-4. Reload and test swipes on iPad: the page should not bounce, and the anchor should remain centered.
+## How it integrates (zero-code-change)
+- Many earlier builds stored labels in `localStorage` key `"labels"`.
+- This script **intercepts** writes to that key and mirrors changes to Netlify.
+- Your UI (double‑tap edit, etc.) should keep working without modification.
 
-If anything regresses, restore your backup `index.html` and tell me what you saw — I’ll ship a targeted fix next.
+## Fallbacks
+- If the Netlify function is unreachable, labels still save locally.
+- Next time the function is available, the latest local copy is pushed upstream.
+
+## Files
+- `script.js` — drop-in replacement.
+- `README.md` — this file.
+
+## Deploy
+1. Back up your current lab `script.js`.
+2. Replace it with the `script.js` from this ZIP.
+3. Reload the lab app on iPad and PC; edits should sync between devices.
+
+If anything breaks or you prefer a different sync contract (e.g., per‑ID updates),
+tell me and I’ll ship RC2 tuned to your function.
