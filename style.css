@@ -1,2 +1,3 @@
-/* SwipeTree baseline wrapper: placeholder style.css */
-/* Replace with your exact baseline style.css (v132-stable-2932596-a) */
+/* SwipeTree Lab rc1 — preserve your existing styles; quick wins are injected via inline <style> in index.html */
+html,body{background:#000; color:#fff; font-family:system-ui, sans-serif;}
+#app{width:100%;}

@@ -1,16 +1,62 @@
-<!-- SwipeTree baseline wrapper: placeholder index.html -->
-<!-- Replace this file with your exact baseline index.html (v132-stable-2932596-a) -->
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>SwipeTree Baseline (Wrapper)</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-  </head>
-  <body>
-    <p style="font-family: system-ui, sans-serif;">
-      SwipeTree baseline wrapper ready.<br>
-      Replace <code>index.html</code>, <code>style.css</code>, and <code>script.js</code> with your exact verified copies.
-    </p>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SwipeTree Lab (rc1)</title>
+  <!-- Existing app styles -->
+  <link rel="stylesheet" href="style.css">
+  <!-- Quick-win CSS (inlined so you don't need extra files) -->
+  <style>
+    html, body {height:100%; margin:0; overscroll-behavior:none; touch-action:none;}
+    body {overflow:hidden;}
+    #app, .app, .stage, .anchor-stage, .swipetree-root {
+      min-height: 100dvh; display:flex; align-items:center; justify-content:center;
+    }
+    .anchor, #anchor, .main-anchor, .anchor-image {
+      display:block; max-width:min(92vw,92vh); max-height:min(92vh,92vw);
+      width:auto; height:auto; margin:0 auto; object-fit:contain;
+      -webkit-user-drag:none; user-select:none; pointer-events:none;
+    }
+    * { touch-action: manipulation; }
+  </style>
+</head>
+<body>
+  <!-- Your app DOM stays as your script renders it. This file only adds CSS+JS helpers. -->
+  <div id="app"></div>
+
+  <!-- Existing app logic -->
+  <script src="config.js"></script>
+  <script src="script.js"></script>
+
+  <!-- Quick-win JS (inlined) -->
+  <script>
+  (function() {
+    const el = document.querySelector('#app') || document.body;
+    // Prevent pinch/double-tap zoom from stealing gestures on iOS
+    document.addEventListener('gesturestart', e => e.preventDefault(), {passive:false});
+    document.addEventListener('gesturechange', e => e.preventDefault(), {passive:false});
+    document.addEventListener('gestureend', e => e.preventDefault(), {passive:false});
+
+    let active = false, touchId = null;
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) { active = true; touchId = e.touches[0].identifier; e.preventDefault(); }
+      else { active = false; }
+    }, { passive:false });
+    el.addEventListener('touchmove', (e) => { if (active) e.preventDefault(); }, { passive:false });
+    el.addEventListener('touchend', (e) => {
+      const still = Array.from(e.touches||[]).some(t => t.identifier === touchId);
+      if (!still) { active = false; touchId = null; }
+    }, { passive:false });
+    el.addEventListener('touchcancel', () => { active=false; touchId=null; }, { passive:false });
+    // Defensive: wheel/keyboard scroll lock in lab
+    el.addEventListener('wheel', (e)=>e.preventDefault(), {passive:false});
+    window.addEventListener('keydown', (e)=>{
+      const keys=['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '];
+      if (keys.includes(e.key)) e.preventDefault();
+    }, {passive:false});
+    console.log('[SwipeTree Lab rc1] Edge friction + anchor centering active');
+  })();
+  </script>
+</body>
 </html>
