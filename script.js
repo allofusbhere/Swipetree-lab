@@ -1,46 +1,49 @@
 
 /*
- SwipeTree Lab — rc1d
- Fixes:
- 1) Cross‑device persistence via Netlify function (GET/PUT).
- 2) Long‑press re‑edit prefilled with existing values.
- 3) Removes the blue corner Edit button entirely.
- 4) Canonical fetch path & cache‑busting to avoid stale responses.
- 5) Defensive: works even if hash changes (e.g., #id=140000).
-
- Assumptions:
- - Images live alongside index.html, named like 140000.jpg, 140000.1.jpg, etc.
- - A Netlify function exists at /.netlify/functions/labels supporting:
-     GET  ?id=140000            -> { id, name, dob } or {}
-     PUT  body { id,name,dob }  -> { ok: true, id }
+ SwipeTree Lab — rc1e (image fallback hotfix)
+ - Keeps rc1d label fixes.
+ - Adds robust image loading fallback chain so the anchor image always appears:
+    1) Local (relative) e.g., `${id}.jpg`
+    2) GitHub Pages images repo: https://allofusbhere.github.io/family-tree-images/
+    3) jsDelivr CDN: https://cdn.jsdelivr.net/gh/allofusbhere/family-tree-images@main/
+ - Optional override via window.SWIPE_CFG.IMAGE_BASE (takes priority).
 */
 
 (function () {
   const $ = (sel, root=document) => root.querySelector(sel);
 
-  // --- DOM scaffolding (keeps page uncluttered; no edit button) ---
   const host = document.getElementById("app") || document.body;
-  host.innerHTML = `
-    <div id="anchorWrap" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#000;">
-      <div id="anchor" style="text-align:center;user-select:none;">
-        <img id="photo" alt="" style="max-width:46vw;max-height:62vh;display:block;margin:0 auto;border-radius:8px;"/>
-        <div id="label" style="color:#fff;margin-top:8px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;"></div>
-      </div>
-    </div>
-    <dialog id="editDialog" style="border-radius:12px;border:none;padding:16px 16px 12px;">
-      <form method="dialog" id="editForm" style="display:flex;flex-direction:column;gap:10px;min-width:260px;">
-        <div style="font-weight:600;font-size:15px;">Edit label</div>
-        <input id="nameInput" placeholder="Name" autocomplete="off" />
-        <input id="dobInput" placeholder="DOB (any format)" autocomplete="off" />
-        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:2px;">
-          <button id="cancelBtn" value="cancel">Cancel</button>
-          <button id="saveBtn" value="default">Save</button>
+  if (!host.dataset.rc1e) {
+    host.dataset.rc1e = "1";
+    host.innerHTML = `
+      <div id="anchorWrap" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#000;">
+        <div id="anchor" style="text-align:center;user-select:none;">
+          <img id="photo" alt="" style="max-width:46vw;max-height:62vh;display:block;margin:0 auto;border-radius:8px;"/>
+          <div id="label" style="color:#fff;margin-top:8px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;"></div>
         </div>
-      </form>
-    </dialog>
-  `;
+      </div>
+      <dialog id="editDialog" style="border-radius:12px;border:none;padding:16px 16px 12px;">
+        <form method="dialog" id="editForm" style="display:flex;flex-direction:column;gap:10px;min-width:260px;">
+          <div style="font-weight:600;font-size:15px;">Edit label</div>
+          <input id="nameInput" placeholder="Name" autocomplete="off" />
+          <input id="dobInput" placeholder="DOB (any format)" autocomplete="off" />
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:2px;">
+            <button id="cancelBtn" value="cancel">Cancel</button>
+            <button id="saveBtn" value="default">Save</button>
+          </div>
+        </form>
+      </dialog>
+    `;
+  }
 
-  // --- Utilities ---
+  // --- Configurable image bases (first truthy wins) ---
+  const CFG = (window.SWIPE_CFG || {});
+  const IMAGE_BASES = [
+    CFG.IMAGE_BASE || "",
+    "https://allofusbhere.github.io/family-tree-images",
+    "https://cdn.jsdelivr.net/gh/allofusbhere/family-tree-images@main"
+  ];
+
   const getIdFromHash = () => {
     const m = location.hash.match(/id=([0-9.]+)/);
     return m ? m[1] : "100000";
@@ -51,15 +54,11 @@
   async function fetchLabel(id) {
     try {
       const res = await fetch(labelsEndpoint(id), { method: "GET", cache: "no-store" });
-      if (!res.ok) throw new Error("GET labels failed");
-      const data = await res.json();
+      const data = res.ok ? await res.json() : {};
       if (data && (data.name || data.dob)) return data;
       return { id };
     } catch (e) {
-      console.warn("Label GET error:", e);
-      // optional fallback from localStorage
-      try { return JSON.parse(localStorage.getItem("label:"+id)) || { id }; }
-      catch { return { id }; }
+      try { return JSON.parse(localStorage.getItem("label:"+id)) || { id }; } catch { return { id }; }
     }
   }
 
@@ -71,16 +70,14 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error("PUT labels failed");
-      const out = await res.json();
-      // write local cache for instant cross‑tab reflection
-      localStorage.setItem("label:"+id, JSON.stringify(payload));
-      return out;
+      if (res.ok) {
+        localStorage.setItem("label:"+id, JSON.stringify(payload));
+        return await res.json();
+      }
+      throw new Error("PUT failed");
     } catch (e) {
-      console.error("Label PUT error:", e);
-      // still cache locally so the user sees it right away
       localStorage.setItem("label:"+id, JSON.stringify(payload));
-      return { ok: false, error: String(e) };
+      return { ok:false, error:String(e) };
     }
   }
 
@@ -91,22 +88,38 @@
     $("#label").textContent = parts.join(" • ");
   }
 
-  function loadPhoto(id) {
-    const src = `${id}.jpg`;
+  function tryLoadImage(id, idx=0) {
     const img = $("#photo");
-    img.src = src;
+    if (idx >= IMAGE_BASES.length) {
+      // show tiny placeholder if all fail
+      img.removeAttribute("src");
+      $("#label").textContent = "Image not found for " + id;
+      return;
+    }
+    const base = IMAGE_BASES[idx];
+    const sep = base && !base.endsWith("/") ? "/" : "";
+    const src = `${base}${base ? sep : ""}${id}.jpg`;
+    img.onerror = () => {
+      // try next base
+      tryLoadImage(id, idx+1);
+    };
+    img.onload = () => {
+      // success; clear handler
+      img.onerror = null;
+    };
+    img.crossOrigin = "anonymous";
+    img.src = src + `?v=${Date.now()}`; // bust any stale caches
     img.alt = id;
   }
 
   async function hydrate(id) {
-    loadPhoto(id);
+    tryLoadImage(id, 0);
     const data = await fetchLabel(id);
     renderLabel(data);
-    // Store current in memory for prefill on long‑press
     currentLabel = { id, name: data.name || "", dob: data.dob || "" };
   }
 
-  // --- Long‑press (SoftEdit) ---
+  // --- Long-press (unchanged from rc1d) ---
   let pressTimer = null;
   let touchStartXY = null;
   const PRESS_MS = 500;
@@ -116,34 +129,22 @@
   function withinJitter(a, b) {
     return Math.abs(a.x - b.x) <= JITTER && Math.abs(a.y - b.y) <= JITTER;
   }
-
   function startPress(e) {
-    const id = getIdFromHash();
     const startPoint = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
     touchStartXY = startPoint;
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
-      // Prefill with existing values
       $("#nameInput").value = currentLabel.name || "";
       $("#dobInput").value = currentLabel.dob || "";
       $("#editDialog").showModal();
     }, PRESS_MS);
   }
-
   function movePress(e) {
     if (!pressTimer || !touchStartXY) return;
     const pt = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
-    if (!withinJitter(touchStartXY, pt)) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
+    if (!withinJitter(touchStartXY, pt)) { clearTimeout(pressTimer); pressTimer = null; }
   }
-
-  function endPress() {
-    clearTimeout(pressTimer);
-    pressTimer = null;
-    touchStartXY = null;
-  }
+  function endPress() { clearTimeout(pressTimer); pressTimer = null; touchStartXY = null; }
 
   $("#anchor").addEventListener("pointerdown", startPress);
   $("#anchor").addEventListener("pointermove", movePress);
@@ -154,7 +155,6 @@
   $("#anchor").addEventListener("touchend", endPress);
   $("#anchor").addEventListener("touchcancel", endPress);
 
-  // --- Save / Cancel ---
   $("#editForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const id = getIdFromHash();
@@ -165,14 +165,8 @@
     renderLabel(currentLabel);
     $("#editDialog").close();
   });
-  $("#cancelBtn").addEventListener("click", (e) => {
-    e.preventDefault();
-    $("#editDialog").close();
-  });
+  $("#cancelBtn").addEventListener("click", (e) => { e.preventDefault(); $("#editDialog").close(); });
 
-  // --- Hash handling ---
   window.addEventListener("hashchange", () => hydrate(getIdFromHash()));
-
-  // --- Init ---
   hydrate(getIdFromHash());
 })();
