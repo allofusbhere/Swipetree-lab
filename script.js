@@ -1,202 +1,83 @@
 
 /*
-  SwipeTree Lab (rc1e) — long-press test & robust init
-  Changes vs rc1d:
-   - Set onerror BEFORE assigning .src to ensure placeholder fallback works on 404.
-   - Multi-base image resolution: tries window.SWIPETREE_IMG_BASE (if set),
-     then './', then '/images/', then GitHub jsDelivr fallback if window.SWIPETREE_IMG_FALLBACK is set.
+  SwipeTree Lab (rc1g) — iOS-ready single-file drop-in
+  Injects centering CSS, suppresses Safari context menu for long-press,
+  robust init, image loading via config.js, Netlify labels, 500ms long-press.
 */
-
 (function () {
-  const JITTER_PX = 12;
-  const HOLD_MS = 500;
-  const RETRY_MS = 120;
-  const RETRY_MAX = 20;
+  const JITTER_PX = 12, HOLD_MS = 500, RETRY_MS = 120, RETRY_MAX = 20;
   const LABELS_ENDPOINT = "/.netlify/functions/labels";
 
-  // ---------- URL helpers ----------
+  (function injectCSS(){
+    const id = "labForceAnchorCSS";
+    if (document.getElementById(id)) return;
+    const css = `#anchor{position:fixed!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%)!important;max-width:min(96vw,96vh)!important;max-height:min(96vh,96vw)!important;width:auto!important;height:auto!important;z-index:2147483647!important;display:block!important;visibility:visible!important;opacity:1!important;-webkit-touch-callout:none!important;-webkit-user-select:none!important;user-select:none!important;touch-action:manipulation!important}body{background:#000}`;
+    const s = document.createElement("style"); s.id = id; s.textContent = css; document.head.appendChild(s);
+  })();
+
   function getIdFromUrl() {
-    const hash = (location.hash || "").replace(/^#/, "");
-    const h = new URLSearchParams(hash);
+    const h = new URLSearchParams((location.hash||"").replace(/^#/,""));
     if (h.has("id")) return h.get("id");
     const q = new URLSearchParams(location.search);
     if (q.has("id")) return q.get("id");
     return null;
   }
-
   function normalizeHash() {
     const q = new URLSearchParams(location.search);
     if (q.has("id") && !location.hash.includes("id=")) {
-      const id = q.get("id");
-      const u = new URL(location.href);
-      u.hash = `id=${id}`;
-      history.replaceState(null, "", u.toString());
+      const u = new URL(location.href); u.hash = `id=${q.get("id")}`; history.replaceState(null,"",u.toString());
     }
   }
-
-  // ---------- DOM helpers ----------
   function ensureAnchorEl() {
     let el = document.getElementById("anchor");
-    if (!el) {
-      el = document.createElement("img");
-      el.id = "anchor";
-      el.alt = "anchor";
-      el.style.display = "block";
-      el.style.maxWidth = "90vw";
-      el.style.maxHeight = "90vh";
-      el.style.objectFit = "contain";
-      el.style.margin = "5vh auto";
-      document.body.appendChild(el);
-    }
+    if (!el) { el = document.createElement("img"); el.id="anchor"; el.alt="anchor"; el.style.objectFit="contain"; document.body.appendChild(el); }
     return el;
   }
-
   function buildCandidateUrls(id) {
-    const filename = `${id}.jpg`;
-    const bases = [];
-
-    if (window.SWIPETREE_IMG_BASE) {
-      const b = String(window.SWIPETREE_IMG_BASE).replace(/\/+$/,"");
-      bases.push(b);
-    }
-    bases.push("");          // ./
-    bases.push("/images");   // optional images subdir
-
-    // Optional explicit fallback (e.g., jsDelivr CDN) set by config.js:
-    if (window.SWIPETREE_IMG_FALLBACK) {
-      const f = String(window.SWIPETREE_IMG_FALLBACK).replace(/\/+$/,"");
-      bases.push(f);
-    }
-
-    return bases.map(b => b ? `${b}/${filename}` : filename);
+    const filename = `${id}.jpg`; const bases = [];
+    if (window.SWIPETREE_IMG_BASE)     bases.push(String(window.SWIPETREE_IMG_BASE).replace(/\/+$/,""));
+    bases.push(""); bases.push("/images");
+    if (window.SWIPETREE_IMG_FALLBACK) bases.push(String(window.SWIPETREE_IMG_FALLBACK).replace(/\/+$/,""));
+    const seen=new Set(), uniq=[]; for(const b of bases){const u=b.replace(/\/+$/,""); if(!seen.has(u)){seen.add(u); uniq.push(u);}}
+    return uniq.map(b=>b?`${b}/${filename}`:filename);
   }
+  function tryImage(el, urls, i=0){return new Promise(res=>{if(i>=urls.length){el.src="placeholder.jpg";return res(false);}const u=urls[i];el.onerror=()=>tryImage(el,urls,i+1).then(res);el.onload=()=>res(true);el.src=u;});}
 
-  async function tryImage(el, urls, idx = 0) {
-    return new Promise(resolve => {
-      if (idx >= urls.length) {
-        el.src = "placeholder.jpg";
-        return resolve(false);
-      }
-      const url = urls[idx];
-      el.onerror = () => {
-        // try next
-        tryImage(el, urls, idx + 1).then(resolve);
-      };
-      el.onload = () => resolve(true);
-      el.src = url; // onerror already set before assigning src
-    });
-  }
+  async function getLabel(id){try{const r=await fetch(`${LABELS_ENDPOINT}?id=${encodeURIComponent(id)}`); if(!r.ok) return null; return await r.json().catch(()=>null);}catch(_){return null;}}
+  async function saveLabel(id,p){try{const r=await fetch(LABELS_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,...p})}); return r.ok;}catch(_){return false;}}
+  function showLabel(el,t){ if(el) el.setAttribute("title", t||""); }
 
-  // ---------- Labels ----------
-  async function getLabel(id) {
-    try {
-      const res = await fetch(`${LABELS_ENDPOINT}?id=${encodeURIComponent(id)}`, { method: "GET" });
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => null);
-      return data || null;
-    } catch (_) {
-      return null;
+  function attachLongPress(el,getId){
+    let downAt=0,sx=0,sy=0,timer=null;
+    el.addEventListener("contextmenu",e=>e.preventDefault());
+    el.addEventListener("gesturestart",e=>e.preventDefault());
+    function start(x,y){ downAt=Date.now(); sx=x; sy=y; clearTimeout(timer);
+      timer=setTimeout(async()=>{ const id=getId(); if(!id) return;
+        const cur=await getLabel(id); const name=prompt(`Edit Name for ${id}:`, (cur&&cur.name)||""); if(name===null) return;
+        const dob =prompt(`Edit DOB for ${id}:`,  (cur&&cur.dob) ||""); if(dob===null) return;
+        const ok=await saveLabel(id,{name,dob}); if(ok) showLabel(el,`${name}${dob?` • ${dob}`:""}`); else alert("Save failed. Try again.");
+      },HOLD_MS);
     }
-  }
-
-  async function saveLabel(id, payload) {
-    try {
-      const res = await fetch(LABELS_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ...payload })
-      });
-      return res.ok;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function showLabel(el, text) {
-    if (!el) return;
-    el.setAttribute("title", text || "");
-  }
-
-  // ---------- Long-press ----------
-  function attachLongPress(el, getCurrentId) {
-    let downAt = 0, startX = 0, startY = 0, timer = null;
-
-    function start(x, y) {
-      downAt = Date.now();
-      startX = x; startY = y;
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        const id = getCurrentId();
-        if (!id) return;
-        const current = await getLabel(id);
-        const currentName = current && current.name ? current.name : "";
-        const currentDob  = current && current.dob  ? current.dob  : "";
-        const name = prompt(`Edit Name for ${id}:`, currentName || "");
-        if (name === null) return;
-        const dob = prompt(`Edit DOB for ${id}:`, currentDob || "");
-        if (dob === null) return;
-        const ok = await saveLabel(id, { name, dob });
-        if (ok) showLabel(el, `${name}${dob ? " • " + dob : ""}`);
-        else alert("Save failed. Please try again.");
-      }, HOLD_MS);
-    }
-    function move(x, y) {
-      if (!downAt) return;
-      const dx = Math.abs(x - startX);
-      const dy = Math.abs(y - startY);
-      if (dx > JITTER_PX || dy > JITTER_PX) clearTimeout(timer);
-    }
-    function end() { clearTimeout(timer); downAt = 0; }
-
-    el.addEventListener("pointerdown", e => { el.setPointerCapture?.(e.pointerId); start(e.clientX, e.clientY); });
-    el.addEventListener("pointermove", e => move(e.clientX, e.clientY));
-    el.addEventListener("pointerup", end);
-    el.addEventListener("pointercancel", end);
-
-    el.addEventListener("touchstart", e => { const t=e.changedTouches[0]; if (t) start(t.clientX,t.clientY); }, { passive: true });
-    el.addEventListener("touchmove",  e => { const t=e.changedTouches[0]; if (t) move(t.clientX,t.clientY); }, { passive: true });
-    el.addEventListener("touchend", end);
+    function move(x,y){ if(!downAt) return; const dx=Math.abs(x-sx), dy=Math.abs(y-sy); if(dx>JITTER_PX||dy>JITTER_PX) clearTimeout(timer); }
+    function end(){ clearTimeout(timer); downAt=0; }
+    el.addEventListener("pointerdown",e=>{el.setPointerCapture?.(e.pointerId); start(e.clientX,e.clientY);});
+    el.addEventListener("pointermove",e=>move(e.clientX,e.clientY));
+    el.addEventListener("pointerup",end); el.addEventListener("pointercancel",end);
+    el.addEventListener("touchstart",e=>{e.preventDefault();const t=e.changedTouches[0]; if(t) start(t.clientX,t.clientY);},{passive:false});
+    el.addEventListener("touchmove", e=>{const t=e.changedTouches[0]; if(t) move(t.clientX,t.clientY);},{passive:true});
+    el.addEventListener("touchend",  e=>{e.preventDefault(); end();},{passive:false});
     el.addEventListener("touchcancel", end);
   }
 
-  // ---------- Main init ----------
-  async function tryInit(attempt = 0) {
-    normalizeHash();
-    const id = getIdFromUrl();
-    if (!id) {
-      if (attempt < RETRY_MAX) return setTimeout(() => tryInit(attempt + 1), RETRY_MS);
-      console.warn("[SwipeTree Lab] No id found in URL.");
-      return;
-    }
-
-    const anchorEl = ensureAnchorEl();
-
-    // Image load with fallbacks
-    const urls = buildCandidateUrls(id);
-    await tryImage(anchorEl, urls);
-
-    const lbl = await getLabel(id);
-    if (lbl && (lbl.name || lbl.dob)) {
-      showLabel(anchorEl, `${lbl.name || ""}${lbl.dob ? " • " + lbl.dob : ""}`.trim());
-    }
-
-    if (!anchorEl.__softEditAttached) {
-      attachLongPress(anchorEl, () => getIdFromUrl());
-      anchorEl.__softEditAttached = true;
-    }
+  async function tryInit(n=0){
+    normalizeHash(); const id=getIdFromUrl();
+    if(!id){ if(n<RETRY_MAX) return setTimeout(()=>tryInit(n+1), RETRY_MS); console.warn("[SwipeTree Lab] No id in URL."); return; }
+    const img=ensureAnchorEl(); await tryImage(img, buildCandidateUrls(id));
+    const lbl=await getLabel(id); if(lbl&&(lbl.name||lbl.dob)) showLabel(img,`${lbl.name||""}${lbl.dob?` • ${lbl.dob}`:""}`.trim());
+    if(!img.__softEditAttached){ attachLongPress(img,()=>getIdFromUrl()); img.__softEditAttached=true; }
   }
-
-  window.addEventListener("hashchange", () => tryInit(0));
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      tryInit(0);
-      setTimeout(() => tryInit(1), RETRY_MS);
-    });
-  } else {
-    tryInit(0);
-    setTimeout(() => tryInit(1), RETRY_MS);
-  }
-
-  console.log("[SwipeTree Lab rc1e] Long-press enabled; robust init with image fallbacks.");
+  addEventListener("hashchange",()=>tryInit(0));
+  if(document.readyState==="loading"){ document.addEventListener("DOMContentLoaded",()=>{tryInit(0); setTimeout(()=>tryInit(1),RETRY_MS);}); }
+  else { tryInit(0); setTimeout(()=>tryInit(1),RETRY_MS); }
+  console.log("[SwipeTree Lab rc1g] iOS-ready: centered image + long-press active.");
 })();
