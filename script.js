@@ -1,20 +1,28 @@
 
 /*
- SwipeTree Lab — rc1e (image fallback hotfix)
- - Keeps rc1d label fixes.
- - Adds robust image loading fallback chain so the anchor image always appears:
-    1) Local (relative) e.g., `${id}.jpg`
-    2) GitHub Pages images repo: https://allofusbhere.github.io/family-tree-images/
-    3) jsDelivr CDN: https://cdn.jsdelivr.net/gh/allofusbhere/family-tree-images@main/
- - Optional override via window.SWIPE_CFG.IMAGE_BASE (takes priority).
+ SwipeTree Lab — rc1f (iOS long‑press reliability + double‑tap fallback)
+  - Keeps rc1d/rc1e behavior (labels + image fallbacks)
+  - Disables page scrolling over the anchor to ensure long‑press fires
+  - Adds double‑tap to open the editor as a backup gesture (300ms)
 */
 
 (function () {
   const $ = (sel, root=document) => root.querySelector(sel);
 
+  // Inject iOS-friendly CSS to prevent scroll/selection
+  const style = document.createElement("style");
+  style.textContent = `
+    html, body { height:100%; background:#000; overscroll-behavior:none; }
+    body { margin:0; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+    #anchorWrap, #anchor { touch-action:none; }
+    dialog::backdrop { background: rgba(0,0,0,0.35); }
+  `;
+  document.head.appendChild(style);
+
+  // Scaffold (if not already present)
   const host = document.getElementById("app") || document.body;
-  if (!host.dataset.rc1e) {
-    host.dataset.rc1e = "1";
+  if (!host.dataset.rc1f) {
+    host.dataset.rc1f = "1";
     host.innerHTML = `
       <div id="anchorWrap" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#000;">
         <div id="anchor" style="text-align:center;user-select:none;">
@@ -36,7 +44,7 @@
     `;
   }
 
-  // --- Configurable image bases (first truthy wins) ---
+  // Config & helpers
   const CFG = (window.SWIPE_CFG || {});
   const IMAGE_BASES = [
     CFG.IMAGE_BASE || "",
@@ -48,7 +56,6 @@
     const m = location.hash.match(/id=([0-9.]+)/);
     return m ? m[1] : "100000";
   };
-
   const labelsEndpoint = (id) => `/.netlify/functions/labels?id=${encodeURIComponent(id)}&_=${Date.now()}`;
 
   async function fetchLabel(id) {
@@ -63,18 +70,16 @@
   }
 
   async function saveLabel(id, name, dob) {
-    const payload = { id, name: (name||"").trim(), dob: (dob||"").trim() };
+    const payload = { id, name: (name||"").trim(), dob: (dob||"").").trim() };
     try {
       const res = await fetch("/.netlify/functions/labels", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        localStorage.setItem("label:"+id, JSON.stringify(payload));
-        return await res.json();
-      }
-      throw new Error("PUT failed");
+      if (!res.ok) throw new Error("PUT failed");
+      localStorage.setItem("label:"+id, JSON.stringify(payload));
+      return await res.json();
     } catch (e) {
       localStorage.setItem("label:"+id, JSON.stringify(payload));
       return { ok:false, error:String(e) };
@@ -91,7 +96,6 @@
   function tryLoadImage(id, idx=0) {
     const img = $("#photo");
     if (idx >= IMAGE_BASES.length) {
-      // show tiny placeholder if all fail
       img.removeAttribute("src");
       $("#label").textContent = "Image not found for " + id;
       return;
@@ -99,16 +103,10 @@
     const base = IMAGE_BASES[idx];
     const sep = base && !base.endsWith("/") ? "/" : "";
     const src = `${base}${base ? sep : ""}${id}.jpg`;
-    img.onerror = () => {
-      // try next base
-      tryLoadImage(id, idx+1);
-    };
-    img.onload = () => {
-      // success; clear handler
-      img.onerror = null;
-    };
+    img.onerror = () => tryLoadImage(id, idx+1);
+    img.onload = () => { img.onerror = null; };
     img.crossOrigin = "anonymous";
-    img.src = src + `?v=${Date.now()}`; // bust any stale caches
+    img.src = src + `?v=${Date.now()}`;
     img.alt = id;
   }
 
@@ -119,25 +117,31 @@
     currentLabel = { id, name: data.name || "", dob: data.dob || "" };
   }
 
-  // --- Long-press (unchanged from rc1d) ---
+  // Long‑press + double‑tap
   let pressTimer = null;
   let touchStartXY = null;
   const PRESS_MS = 500;
-  const JITTER = 12;
+  const JITTER = 18;
+  let lastTapTime = 0;
   let currentLabel = { id: "", name: "", dob: "" };
 
   function withinJitter(a, b) {
     return Math.abs(a.x - b.x) <= JITTER && Math.abs(a.y - b.y) <= JITTER;
   }
+
+  function openEditorPrefilled() {
+    $("#nameInput").value = currentLabel.name || "";
+    $("#dobInput").value = currentLabel.dob || "";
+    $("#editDialog").showModal();
+  }
+
   function startPress(e) {
-    const startPoint = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
-    touchStartXY = startPoint;
+    // prevent page scroll so long‑press can fire
+    if (e.cancelable) e.preventDefault();
+    const pt = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
+    touchStartXY = pt;
     clearTimeout(pressTimer);
-    pressTimer = setTimeout(() => {
-      $("#nameInput").value = currentLabel.name || "";
-      $("#dobInput").value = currentLabel.dob || "";
-      $("#editDialog").showModal();
-    }, PRESS_MS);
+    pressTimer = setTimeout(openEditorPrefilled, PRESS_MS);
   }
   function movePress(e) {
     if (!pressTimer || !touchStartXY) return;
@@ -146,14 +150,31 @@
   }
   function endPress() { clearTimeout(pressTimer); pressTimer = null; touchStartXY = null; }
 
-  $("#anchor").addEventListener("pointerdown", startPress);
-  $("#anchor").addEventListener("pointermove", movePress);
-  $("#anchor").addEventListener("pointerup", endPress);
-  $("#anchor").addEventListener("pointercancel", endPress);
-  $("#anchor").addEventListener("touchstart", startPress, { passive: true });
-  $("#anchor").addEventListener("touchmove", movePress, { passive: true });
-  $("#anchor").addEventListener("touchend", endPress);
-  $("#anchor").addEventListener("touchcancel", endPress);
+  // Double‑tap fallback
+  function onTap(e) {
+    const now = Date.now();
+    if (now - lastTapTime < 300) {
+      if (e.cancelable) e.preventDefault();
+      openEditorPrefilled();
+      lastTapTime = 0;
+    } else {
+      lastTapTime = now;
+    }
+  }
+
+  const target = $("#anchor");
+  // Pointer events
+  target.addEventListener("pointerdown", startPress);
+  target.addEventListener("pointermove", movePress);
+  target.addEventListener("pointerup", endPress);
+  target.addEventListener("pointercancel", endPress);
+  // Touch (non‑passive so we can preventDefault)
+  target.addEventListener("touchstart", startPress, { passive: false });
+  target.addEventListener("touchmove", movePress, { passive: false });
+  target.addEventListener("touchend", endPress, { passive: false });
+  target.addEventListener("touchcancel", endPress, { passive: false });
+  // Tap detection (covers quick double‑tap)
+  target.addEventListener("click", onTap);
 
   $("#editForm").addEventListener("submit", async (e) => {
     e.preventDefault();
