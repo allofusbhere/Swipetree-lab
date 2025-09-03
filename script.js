@@ -1,28 +1,36 @@
 
 /*
- SwipeTree Lab — rc1f (iOS long‑press reliability + double‑tap fallback)
-  - Keeps rc1d/rc1e behavior (labels + image fallbacks)
-  - Disables page scrolling over the anchor to ensure long‑press fires
-  - Adds double‑tap to open the editor as a backup gesture (300ms)
+ SwipeTree Lab — rc1h (image extension fallback + on-screen debug)
+ - Tries .jpg, .JPG, .jpeg, .png for each base
+ - Shows a small debug line in bottom-left with the last attempted URL (tap to hide)
+ - Keeps rc1f behavior (long-press + double-tap + label persistence)
 */
 
 (function () {
   const $ = (sel, root=document) => root.querySelector(sel);
 
-  // Inject iOS-friendly CSS to prevent scroll/selection
+  // Basic styles & debug overlay
   const style = document.createElement("style");
   style.textContent = `
     html, body { height:100%; background:#000; overscroll-behavior:none; }
     body { margin:0; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
     #anchorWrap, #anchor { touch-action:none; }
+    #dbg { position:fixed; left:8px; bottom:8px; font:12px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:#9cf; opacity:.8; background:rgba(0,0,0,.35); padding:6px 8px; border-radius:6px; max-width:80vw; z-index:9999; }
+    #dbg.hide { display:none; }
     dialog::backdrop { background: rgba(0,0,0,0.35); }
   `;
   document.head.appendChild(style);
 
-  // Scaffold (if not already present)
+  const dbg = document.createElement("div");
+  dbg.id = "dbg";
+  dbg.textContent = "debug: ready";
+  dbg.addEventListener("click", ()=>dbg.classList.add("hide"));
+  document.body.appendChild(dbg);
+  function setDbg(t){ dbg.textContent = t; }
+
   const host = document.getElementById("app") || document.body;
-  if (!host.dataset.rc1f) {
-    host.dataset.rc1f = "1";
+  if (!host.dataset.rc1h) {
+    host.dataset.rc1h = "1";
     host.innerHTML = `
       <div id="anchorWrap" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#000;">
         <div id="anchor" style="text-align:center;user-select:none;">
@@ -44,19 +52,19 @@
     `;
   }
 
-  // Config & helpers
   const CFG = (window.SWIPE_CFG || {});
   const IMAGE_BASES = [
     CFG.IMAGE_BASE || "",
     "https://allofusbhere.github.io/family-tree-images",
     "https://cdn.jsdelivr.net/gh/allofusbhere/family-tree-images@main"
   ];
+  const EXTENSIONS = [".jpg",".JPG",".jpeg",".png"];
 
   const getIdFromHash = () => {
     const m = location.hash.match(/id=([0-9.]+)/);
     return m ? m[1] : "100000";
   };
-  const labelsEndpoint = (id) => `/.netlify/functions/labels?id=${encodeURIComponent(id)}&_=${Date.now()}`;
+  const labelsEndpoint = (id) => `${(window.SWIPE_CFG && window.SWIPE_CFG.LABELS_ENDPOINT) || "/.netlify/functions/labels"}?id=${encodeURIComponent(id)}&_=${Date.now()}`;
 
   async function fetchLabel(id) {
     try {
@@ -70,9 +78,9 @@
   }
 
   async function saveLabel(id, name, dob) {
-    const payload = { id, name: (name||"").trim(), dob: (dob||"").").trim() };
+    const payload = { id, name: (name||"").trim(), dob: (dob||"").trim() };
     try {
-      const res = await fetch("/.netlify/functions/labels", {
+      const res = await fetch(((window.SWIPE_CFG && window.SWIPE_CFG.LABELS_ENDPOINT) || "/.netlify/functions/labels"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -93,31 +101,42 @@
     $("#label").textContent = parts.join(" • ");
   }
 
-  function tryLoadImage(id, idx=0) {
+  function tryLoadImage(id, baseIdx=0, extIdx=0) {
     const img = $("#photo");
-    if (idx >= IMAGE_BASES.length) {
+    if (baseIdx >= IMAGE_BASES.length) {
       img.removeAttribute("src");
+      setDbg("image not found for "+id);
       $("#label").textContent = "Image not found for " + id;
       return;
     }
-    const base = IMAGE_BASES[idx];
+    const base = IMAGE_BASES[baseIdx];
+    const ext = EXTENSIONS[extIdx];
     const sep = base && !base.endsWith("/") ? "/" : "";
-    const src = `${base}${base ? sep : ""}${id}.jpg`;
-    img.onerror = () => tryLoadImage(id, idx+1);
-    img.onload = () => { img.onerror = null; };
+    const url = `${base}${base ? sep : ""}${id}${ext}`;
+    setDbg("img: "+url);
+
+    img.onerror = () => {
+      const nextExt = extIdx + 1;
+      if (nextExt < EXTENSIONS.length) {
+        tryLoadImage(id, baseIdx, nextExt);
+      } else {
+        tryLoadImage(id, baseIdx + 1, 0);
+      }
+    };
+    img.onload = () => { img.onerror = null; setDbg("loaded: "+url); };
     img.crossOrigin = "anonymous";
-    img.src = src + `?v=${Date.now()}`;
+    img.src = url + `?v=${Date.now()}`;
     img.alt = id;
   }
 
   async function hydrate(id) {
-    tryLoadImage(id, 0);
+    tryLoadImage(id, 0, 0);
     const data = await fetchLabel(id);
     renderLabel(data);
     currentLabel = { id, name: data.name || "", dob: data.dob || "" };
   }
 
-  // Long‑press + double‑tap
+  // Gestures: long-press + double-tap
   let pressTimer = null;
   let touchStartXY = null;
   const PRESS_MS = 500;
@@ -125,18 +144,13 @@
   let lastTapTime = 0;
   let currentLabel = { id: "", name: "", dob: "" };
 
-  function withinJitter(a, b) {
-    return Math.abs(a.x - b.x) <= JITTER && Math.abs(a.y - b.y) <= JITTER;
-  }
-
+  function withinJitter(a, b) { return Math.abs(a.x - b.x) <= JITTER && Math.abs(a.y - b.y) <= JITTER; }
   function openEditorPrefilled() {
     $("#nameInput").value = currentLabel.name || "";
     $("#dobInput").value = currentLabel.dob || "";
     $("#editDialog").showModal();
   }
-
   function startPress(e) {
-    // prevent page scroll so long‑press can fire
     if (e.cancelable) e.preventDefault();
     const pt = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
     touchStartXY = pt;
@@ -148,32 +162,20 @@
     const pt = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
     if (!withinJitter(touchStartXY, pt)) { clearTimeout(pressTimer); pressTimer = null; }
   }
-  function endPress() { clearTimeout(pressTimer); pressTimer = null; touchStartXY = null; }
-
-  // Double‑tap fallback
-  function onTap(e) {
-    const now = Date.now();
-    if (now - lastTapTime < 300) {
-      if (e.cancelable) e.preventDefault();
-      openEditorPrefilled();
-      lastTapTime = 0;
-    } else {
-      lastTapTime = now;
-    }
+  function endPress(){ clearTimeout(pressTimer); pressTimer=null; touchStartXY=null; }
+  function onTap(e){
+    const now=Date.now(); if(now-lastTapTime<300){ if(e.cancelable)e.preventDefault(); openEditorPrefilled(); lastTapTime=0; } else { lastTapTime=now; }
   }
 
   const target = $("#anchor");
-  // Pointer events
   target.addEventListener("pointerdown", startPress);
   target.addEventListener("pointermove", movePress);
   target.addEventListener("pointerup", endPress);
   target.addEventListener("pointercancel", endPress);
-  // Touch (non‑passive so we can preventDefault)
-  target.addEventListener("touchstart", startPress, { passive: false });
-  target.addEventListener("touchmove", movePress, { passive: false });
-  target.addEventListener("touchend", endPress, { passive: false });
-  target.addEventListener("touchcancel", endPress, { passive: false });
-  // Tap detection (covers quick double‑tap)
+  target.addEventListener("touchstart", startPress, { passive:false });
+  target.addEventListener("touchmove", movePress, { passive:false });
+  target.addEventListener("touchend", endPress, { passive:false });
+  target.addEventListener("touchcancel", endPress, { passive:false });
   target.addEventListener("click", onTap);
 
   $("#editForm").addEventListener("submit", async (e) => {
