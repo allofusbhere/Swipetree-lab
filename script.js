@@ -1,39 +1,33 @@
 
 /*
-  SwipeTree Lab (rc1d) — long-press test & robust init
-  - Accepts both #id=100000 and ?id=100000
-  - Guards against null 'anchor' and retries init safely
-  - Re-reads hash at load + short delay (Firefox timing)
-  - Long-press (SoftEdit): 500ms hold, 12px jitter tolerance
-  - Label persistence via Netlify function /.netlify/functions/labels
+  SwipeTree Lab (rc1e) — long-press test & robust init
+  Changes vs rc1d:
+   - Set onerror BEFORE assigning .src to ensure placeholder fallback works on 404.
+   - Multi-base image resolution: tries window.SWIPETREE_IMG_BASE (if set),
+     then './', then '/images/', then GitHub jsDelivr fallback if window.SWIPETREE_IMG_FALLBACK is set.
 */
 
 (function () {
   const JITTER_PX = 12;
   const HOLD_MS = 500;
-  const RETRY_MS = 120;      // short retry to catch hash parsing on Firefox
-  const RETRY_MAX = 20;      // ~2.4s total fallback
+  const RETRY_MS = 120;
+  const RETRY_MAX = 20;
   const LABELS_ENDPOINT = "/.netlify/functions/labels";
 
   // ---------- URL helpers ----------
   function getIdFromUrl() {
-    // Prefer #id=... then fallback to ?id=...
     const hash = (location.hash || "").replace(/^#/, "");
     const h = new URLSearchParams(hash);
     if (h.has("id")) return h.get("id");
-
     const q = new URLSearchParams(location.search);
     if (q.has("id")) return q.get("id");
-
     return null;
   }
 
   function normalizeHash() {
-    // If only query has id, convert to hash (don't drop cache-busting params)
     const q = new URLSearchParams(location.search);
     if (q.has("id") && !location.hash.includes("id=")) {
       const id = q.get("id");
-      // Keep existing search (like ?cache=rc1d-XXXX) and add hash
       const u = new URL(location.href);
       u.hash = `id=${id}`;
       history.replaceState(null, "", u.toString());
@@ -47,7 +41,6 @@
       el = document.createElement("img");
       el.id = "anchor";
       el.alt = "anchor";
-      // Minimal styles so it shows up in Lab even if CSS is missing
       el.style.display = "block";
       el.style.maxWidth = "90vw";
       el.style.maxHeight = "90vh";
@@ -58,15 +51,43 @@
     return el;
   }
 
-  function imageUrlFor(id) {
-    // Lab uses flat filenames like 100000.jpg in the same directory.
-    // If your setup serves images elsewhere, set window.SWIPETREE_IMG_BASE.
-    const base = (window.SWIPETREE_IMG_BASE || "").replace(/\/+$/, "");
+  function buildCandidateUrls(id) {
     const filename = `${id}.jpg`;
-    return base ? `${base}/${filename}` : filename;
+    const bases = [];
+
+    if (window.SWIPETREE_IMG_BASE) {
+      const b = String(window.SWIPETREE_IMG_BASE).replace(/\/+$/,"");
+      bases.push(b);
+    }
+    bases.push("");          // ./
+    bases.push("/images");   // optional images subdir
+
+    // Optional explicit fallback (e.g., jsDelivr CDN) set by config.js:
+    if (window.SWIPETREE_IMG_FALLBACK) {
+      const f = String(window.SWIPETREE_IMG_FALLBACK).replace(/\/+$/,"");
+      bases.push(f);
+    }
+
+    return bases.map(b => b ? `${b}/${filename}` : filename);
   }
 
-  // ---------- Labels persistence ----------
+  async function tryImage(el, urls, idx = 0) {
+    return new Promise(resolve => {
+      if (idx >= urls.length) {
+        el.src = "placeholder.jpg";
+        return resolve(false);
+      }
+      const url = urls[idx];
+      el.onerror = () => {
+        // try next
+        tryImage(el, urls, idx + 1).then(resolve);
+      };
+      el.onload = () => resolve(true);
+      el.src = url; // onerror already set before assigning src
+    });
+  }
+
+  // ---------- Labels ----------
   async function getLabel(id) {
     try {
       const res = await fetch(`${LABELS_ENDPOINT}?id=${encodeURIComponent(id)}`, { method: "GET" });
@@ -92,73 +113,48 @@
   }
 
   function showLabel(el, text) {
-    // simple title overlay via dataset/title; Lab-only
     if (!el) return;
     el.setAttribute("title", text || "");
   }
 
-  // ---------- Long-press (SoftEdit) ----------
+  // ---------- Long-press ----------
   function attachLongPress(el, getCurrentId) {
-    let downAt = 0;
-    let startX = 0;
-    let startY = 0;
-    let held = false;
-    let timer = null;
+    let downAt = 0, startX = 0, startY = 0, timer = null;
 
     function start(x, y) {
       downAt = Date.now();
-      startX = x; startY = y; held = false;
+      startX = x; startY = y;
       clearTimeout(timer);
       timer = setTimeout(async () => {
-        held = true;
         const id = getCurrentId();
         if (!id) return;
         const current = await getLabel(id);
         const currentName = current && current.name ? current.name : "";
-        const currentDob = current && current.dob ? current.dob : "";
-        // Minimal prompt UI for Lab
+        const currentDob  = current && current.dob  ? current.dob  : "";
         const name = prompt(`Edit Name for ${id}:`, currentName || "");
-        if (name === null) return; // cancelled
+        if (name === null) return;
         const dob = prompt(`Edit DOB for ${id}:`, currentDob || "");
-        if (dob === null) return; // cancelled
+        if (dob === null) return;
         const ok = await saveLabel(id, { name, dob });
         if (ok) showLabel(el, `${name}${dob ? " • " + dob : ""}`);
         else alert("Save failed. Please try again.");
       }, HOLD_MS);
     }
-
     function move(x, y) {
       if (!downAt) return;
       const dx = Math.abs(x - startX);
       const dy = Math.abs(y - startY);
-      if (dx > JITTER_PX || dy > JITTER_PX) {
-        clearTimeout(timer);
-      }
+      if (dx > JITTER_PX || dy > JITTER_PX) clearTimeout(timer);
     }
+    function end() { clearTimeout(timer); downAt = 0; }
 
-    function end() {
-      clearTimeout(timer);
-      downAt = 0;
-    }
-
-    // Pointer events (covers mouse + touch in modern browsers)
-    el.addEventListener("pointerdown", e => {
-      el.setPointerCapture(e.pointerId);
-      start(e.clientX, e.clientY);
-    });
+    el.addEventListener("pointerdown", e => { el.setPointerCapture?.(e.pointerId); start(e.clientX, e.clientY); });
     el.addEventListener("pointermove", e => move(e.clientX, e.clientY));
     el.addEventListener("pointerup", end);
     el.addEventListener("pointercancel", end);
 
-    // Fallback for older iOS/Safari if needed
-    el.addEventListener("touchstart", e => {
-      const t = e.changedTouches[0];
-      if (t) start(t.clientX, t.clientY);
-    }, { passive: true });
-    el.addEventListener("touchmove", e => {
-      const t = e.changedTouches[0];
-      if (t) move(t.clientX, t.clientY);
-    }, { passive: true });
+    el.addEventListener("touchstart", e => { const t=e.changedTouches[0]; if (t) start(t.clientX,t.clientY); }, { passive: true });
+    el.addEventListener("touchmove",  e => { const t=e.changedTouches[0]; if (t) move(t.clientX,t.clientY); }, { passive: true });
     el.addEventListener("touchend", end);
     el.addEventListener("touchcancel", end);
   }
@@ -175,30 +171,23 @@
 
     const anchorEl = ensureAnchorEl();
 
-    // Load image and label
-    const url = imageUrlFor(id);
-    anchorEl.src = url;
-    anchorEl.onerror = function () {
-      // Keep lab usable even if the image is missing
-      this.src = "placeholder.jpg";
-    };
+    // Image load with fallbacks
+    const urls = buildCandidateUrls(id);
+    await tryImage(anchorEl, urls);
 
     const lbl = await getLabel(id);
     if (lbl && (lbl.name || lbl.dob)) {
       showLabel(anchorEl, `${lbl.name || ""}${lbl.dob ? " • " + lbl.dob : ""}`.trim());
     }
 
-    // Attach long-press once
     if (!anchorEl.__softEditAttached) {
       attachLongPress(anchorEl, () => getIdFromUrl());
       anchorEl.__softEditAttached = true;
     }
   }
 
-  // Re-init if the hash changes (navigate within the same tab)
   window.addEventListener("hashchange", () => tryInit(0));
 
-  // Kick off after DOM is ready, plus a short retry for Firefox
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       tryInit(0);
@@ -209,5 +198,5 @@
     setTimeout(() => tryInit(1), RETRY_MS);
   }
 
-  console.log("[SwipeTree Lab rc1d] Long-press enabled; robust init active.");
+  console.log("[SwipeTree Lab rc1e] Long-press enabled; robust init with image fallbacks.");
 })();
