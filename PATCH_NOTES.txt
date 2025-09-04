@@ -1,0 +1,18 @@
+
+SwipeTree Lab Full Bundle (rc1d)
+
+What this includes:
+- index.html — minimal anchor + label area + SoftEdit overlay markup with required element IDs.
+- style.css — basic dark theme and overlay styling.
+- script.js — Lab Patch r1 logic:
+  * Loads existing label from /.netlify/functions/labels?id=NNNNNN on page load
+  * Long-press on the anchor opens overlay pre-filled with saved values
+  * Save sends POST { id, name, dob } to /.netlify/functions/labels and updates the page
+  * Removes corner edit button if present (id: cornerEditButton)
+- placeholder.jpg — only used if the real image (e.g., 100000.jpg) is missing.
+
+Usage:
+1) Deploy these three files (index.html, style.css, script.js) to your Lab site root.
+2) Ensure your Netlify function is reachable at /.netlify/functions/labels (as you already tested).
+3) Open index.html#id=100000
+4) Long-press the image → edit → Save → reload → labels should persist across devices.

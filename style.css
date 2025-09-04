@@ -1,29 +1,20 @@
+
+:root { --bg:#0b0b0b; --fg:#fafafa; --muted:#b7b7b7; }
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; height: 100%; overscroll-behavior: none; }
-body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: #0b0b0c; color: #eee; }
-#topbar {
-  display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem;
-  border-bottom: 1px solid #222; background: #111;
-}
-#topbar input { background: #181818; border: 1px solid #2a2a2a; color: #ddd; padding: .4rem .6rem; border-radius: .5rem; }
-#topbar button { background: #222; color: #ddd; border: 1px solid #2a2a2a; padding: .45rem .8rem; border-radius: .6rem; cursor: pointer; }
-#topbar button:active { transform: translateY(1px); }
-#status { margin-left: .5rem; font-size: .9rem; color: #9fd; min-width: 12ch; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+#app { display: grid; place-items: center; height: 100%; padding: 16px; }
+#anchorWrap { display: grid; gap: 12px; place-items: center; }
+#anchorImage { max-width: min(90vw, 540px); max-height: 70vh; object-fit: contain; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+#labelsBox { text-align: center; }
+#labelName { font-weight: 600; font-size: 1.125rem; }
+#labelDob { color: var(--muted); font-size: .95rem; }
 
-#anchorWrap { position: fixed; inset: 0; display: grid; place-items: center; }
-#anchorImage { max-width: min(90vw, 700px); max-height: min(72vh, 900px); object-fit: contain; border-radius: 1rem; box-shadow: 0 8px 40px rgba(0,0,0,.6); user-select: none; }
-#labels { margin-top: .75rem; text-align: center; }
-.label { font-size: clamp(16px, 2.2vw, 22px); line-height: 1.25; opacity: .95; }
-#nameLabel { font-weight: 600; }
-#dobLabel { opacity: .85; }
-
-dialog#softEdit::backdrop { background: rgba(0,0,0,.6); }
-dialog#softEdit {
-  border: 1px solid #2a2a2a; background: #151515; color: #eee; border-radius: 1rem; padding: 1rem 1.2rem; width: min(92vw, 420px);
-}
-#softEdit h2 { margin: .25rem 0 1rem 0; font-size: 1.15rem; }
-.field { display: grid; gap: .35rem; margin-bottom: .75rem; }
-.field input { background: #111; border: 1px solid #2a2a2a; color: #ddd; padding: .6rem .7rem; border-radius: .6rem; }
-menu { display: flex; justify-content: flex-end; gap: .5rem; margin: .5rem 0 0; padding: 0; }
-menu button { background: #222; color: #ddd; border: 1px solid #2a2a2a; padding: .5rem .9rem; border-radius: .7rem; cursor: pointer; }
-menu button#saveBtn { border-color: #2f5; }
+/* Overlay */
+#editOverlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.6); backdrop-filter: blur(2px); z-index: 1000; }
+#editOverlay .panel { width: min(92vw, 520px); background: #141414; border: 1px solid #262626; border-radius: 14px; padding: 16px; display: grid; gap: 10px; }
+#editOverlay h2 { margin: 0 0 6px; font-size: 1.1rem; }
+#editOverlay label { display: grid; gap: 6px; font-size: .9rem; }
+#editOverlay input { background: #1b1b1b; color: var(--fg); border: 1px solid #303030; border-radius: 10px; padding: 10px 12px; }
+#editOverlay .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+#editOverlay button { padding: 10px 14px; border-radius: 10px; border: 1px solid #2f2f2f; background: #232323; color: var(--fg); cursor: pointer; }
+#editOverlay button:hover { filter: brightness(1.05); }
