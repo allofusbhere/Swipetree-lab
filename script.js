@@ -1,33 +1,30 @@
-// Lab Patch r1 — Labels device-independent (prefill + save) and no corner edit button
-// Assumptions:
-// - There is an element with id="anchorImage" (the main person image)
-// - There is an element with id="labelName" and id="labelDob" to display text under the image
-// - Long-press opens an overlay with inputs #nameInput and #dobInput and buttons #saveLabelBtn and #cancelLabelBtn
-// - Current person's ID is in the URL hash as #id=NNNNNN or accessible via getCurrentId()
-//
-// If your DOM ids differ, adjust the querySelectors below. This is a drop-in pattern for the Lab build.
 
+// rc1e-core+cachefix: add cache busting for Safari/iOS so labels show on all devices
 (function(){
-  const FN = '/.netlify/functions/labels'; // Netlify function endpoint
+  const FN = '/.netlify/functions/labels';
   const LONG_PRESS_MS = 500;
   const JITTER_PX = 12;
 
-  // ---- utils ----
   function getCurrentId() {
-    // From URL like ...#id=140000
     const m = location.hash.match(/id=([\d.]+)/);
     return m ? m[1] : '100000';
   }
 
   async function getLabel(id) {
-    const res = await fetch(`${FN}?id=${encodeURIComponent(id)}`, { method: 'GET' });
+    const bust = Date.now();
+    const res = await fetch(`${FN}?id=${encodeURIComponent(id)}&t=${bust}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'Accept': 'application/json' }
+    });
     if (!res.ok) throw new Error('GET labels failed');
-    return res.json(); // {id,name,dob}
+    return res.json();
   }
 
   async function setLabel(id, name, dob) {
     const res = await fetch(FN, {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, name, dob })
     });
@@ -40,15 +37,19 @@
     const dobEl = document.querySelector('#labelDob');
     if (nameEl) nameEl.textContent = name || '';
     if (dobEl) dobEl.textContent = dob || '';
+    // force paint
+    const box = document.querySelector('#labelsBox');
+    if (box) {
+      box.style.willChange = 'contents';
+      requestAnimationFrame(()=>{ box.style.willChange = 'auto'; });
+    }
   }
 
-  // ---- overlay wiring ----
   function openOverlayPrefilled(name, dob) {
     const overlay = document.querySelector('#editOverlay');
     const nameInput = document.querySelector('#nameInput');
     const dobInput = document.querySelector('#dobInput');
     if (!overlay || !nameInput || !dobInput) return;
-
     nameInput.value = name || '';
     dobInput.value = dob || '';
     overlay.style.display = 'flex';
@@ -64,7 +65,6 @@
       const id = getCurrentId();
       const data = await getLabel(id);
       setVisibleText(data.name, data.dob);
-      // Keep latest in memory for prefill
       window.__labelCache = { id, name: data.name || '', dob: data.dob || '' };
     } catch (e) {
       console.warn(e);
@@ -76,13 +76,21 @@
     if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
   }
 
-  // ---- long-press detection ----
+  function suppressIOSCallouts(el){
+    if (!el) return;
+    el.style.webkitTouchCallout = 'none';
+    el.style.webkitUserSelect = 'none';
+    el.style.userSelect = 'none';
+    el.setAttribute('draggable','false');
+    el.addEventListener('contextmenu', (e)=> e.preventDefault());
+    el.addEventListener('gesturestart', (e)=> e.preventDefault());
+  }
+
   function installLongPress(el) {
     if (!el) return;
-    let timer = null, startX = 0, startY = 0, moved = false;
+    let timer = null, startX = 0, startY = 0;
 
     const start = (x, y) => {
-      moved = false;
       startX = x; startY = y;
       timer = setTimeout(() => {
         const cache = window.__labelCache || {name:'', dob:''};
@@ -98,17 +106,16 @@
     el.addEventListener('touchmove', (e) => {
       const t = e.touches[0];
       if (Math.abs(t.clientX - startX) > JITTER_PX || Math.abs(t.clientY - startY) > JITTER_PX) {
-        moved = true; cancel();
+        cancel();
       }
     }, {passive: true});
     el.addEventListener('touchend', cancel, {passive: true});
     el.addEventListener('touchcancel', cancel, {passive: true});
 
-    // Pointer/mouse fallback
     el.addEventListener('pointerdown', (e) => start(e.clientX, e.clientY));
     el.addEventListener('pointermove', (e) => {
       if (Math.abs(e.clientX - startX) > JITTER_PX || Math.abs(e.clientY - startY) > JITTER_PX) {
-        moved = true; cancel();
+        cancel();
       }
     });
     el.addEventListener('pointerup', cancel);
@@ -131,7 +138,6 @@
           const name = nameInput.value.trim();
           const dob  = dobInput.value.trim();
           await setLabel(id, name, dob);
-          // Update UI and cache
           setVisibleText(name, dob);
           window.__labelCache = { id, name, dob };
           closeOverlay();
@@ -143,35 +149,12 @@
     }
   }
 
-  // ---- init ----
   window.addEventListener('DOMContentLoaded', async () => {
     removeCornerEditButton();
     const anchor = document.querySelector('#anchorImage');
+    suppressIOSCallouts(anchor);
     installLongPress(anchor);
     await wireOverlayButtons();
     await hydrateFromServer();
-  });
-
-})();
-
-// --- rc1e inline (iOS no-callout) ---
-// rc1e: Suppress iOS share/callout on long‑press; keep SoftEdit long‑press working
-(function(){
-  function suppressIOSCallouts(el){
-    if (!el) return;
-    // CSS-style flags via JS
-    el.style.webkitTouchCallout = 'none';
-    el.style.webkitUserSelect = 'none';
-    el.style.userSelect = 'none';
-    el.setAttribute('draggable','false');
-    // Block context menu / hold-to-save
-    el.addEventListener('contextmenu', (e)=> e.preventDefault());
-    // Some Safari gestures
-    el.addEventListener('gesturestart', (e)=> e.preventDefault());
-  }
-  // Wait for DOM then patch anchor
-  window.addEventListener('DOMContentLoaded', () => {
-    const anchor = document.querySelector('#anchorImage');
-    suppressIOSCallouts(anchor);
   });
 })();
