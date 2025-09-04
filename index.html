@@ -9,7 +9,7 @@
 </head>
 <body>
   <div id="app">
-    <img id="anchorImage" src="" alt="Anchor">
+    <img id="anchorImage" alt="Anchor" />
     <div id="labelsBox">
       <div id="labelName"></div>
       <div id="labelDob"></div>
@@ -25,6 +25,28 @@
       <button id="saveLabelBtn">Save</button>
     </div>
   </div>
+
+  <script>
+    // Image loader: use GitHub Pages as the CDN
+    (function() {
+      const IMAGE_BASE = "https://allofusbhere.github.io/family-tree-images/";
+      const FALLBACK = "placeholder.jpg";
+      const img = document.getElementById('anchorImage');
+
+      function getId(){
+        const m = location.hash.match(/id=([\d.]+)/);
+        return m ? m[1] : '100000';
+      }
+      function setImage(){
+        const id = getId();
+        img.src = IMAGE_BASE + id + ".jpg";
+        img.onerror = () => { img.src = FALLBACK; };
+        img.setAttribute('data-id', id);
+      }
+      window.addEventListener('hashchange', setImage);
+      window.addEventListener('DOMContentLoaded', setImage);
+    })();
+  </script>
 
   <script src="script.js"></script>
 </body>
