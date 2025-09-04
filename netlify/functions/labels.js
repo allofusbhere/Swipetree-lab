@@ -1,50 +1,58 @@
-
 // Netlify Function: labels
-// Simple GET/PUT over Blob storage for { id, name, dob }
-// NOTE: Replace with your preferred persistence if you already have one.
-// This variant adds no-store caching headers to avoid device cache differences.
-
+// - GET  /.netlify/functions/labels?id=140000   -> { id, name, dob }
+// - POST /.netlify/functions/labels             -> body: { id, name, dob }
+//
+// Uses Netlify Blobs (if available). Falls back to in‑memory store for local dev.
 export default async (request, context) => {
-  const store = context.blob;
   const url = new URL(request.url);
-  const id = url.searchParams.get("id");
+  const method = request.method.toUpperCase();
 
-  const headers = {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-    "pragma": "no-cache",
-    "expires": "0",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,PUT,OPTIONS",
-    "access-control-allow-headers": "Content-Type",
-  };
+  // Prefer site-wide blob store if available
+  const blobs = context?.blobs;
 
-  if (request.method === "OPTIONS") {
-    return new Response("", { status: 204, headers });
-  }
+  // Simple key namespace
+  const KEY = (id) => `labels:${id}`;
 
-  if (request.method === "GET") {
-    if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers });
+  if (method === 'GET') {
+    const id = url.searchParams.get('id');
+    if (!id) return new Response(JSON.stringify({ error: 'missing id' }), { status: 400 });
+
     try {
-      const text = await store.get(id);
-      const data = text ? JSON.parse(text) : {};
-      return new Response(JSON.stringify(data || {}), { status: 200, headers });
-    } catch (e) {
-      return new Response(JSON.stringify({}), { status: 200, headers });
+      if (blobs) {
+        const text = await blobs.get(KEY(id), { type: 'text' });
+        if (!text) return new Response(JSON.stringify({ id, name: '', dob: '' }), { headers: { 'Content-Type': 'application/json' } });
+        return new Response(text, { headers: { 'Content-Type': 'application/json' } });
+      } else {
+        // Fallback (non-persistent)
+        globalThis.__labels ||= new Map();
+        const v = globalThis.__labels.get(KEY(id)) || { id, name: '', dob: '' };
+        return new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } });
+      }
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
     }
   }
 
-  if (request.method === "PUT") {
+  if (method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const { id, name = '', dob = '' } = body || {};
+    if (!id) return new Response(JSON.stringify({ error: 'missing id' }), { status: 400 });
+
+    const value = JSON.stringify({ id, name, dob });
+
     try {
-      const body = await request.json();
-      if (!body || !body.id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers });
-      const payload = JSON.stringify({ id: body.id, name: body.name || "", dob: body.dob || "" });
-      await store.set(body.id, payload);
-      return new Response(JSON.stringify({ ok: true, id: body.id }), { status: 200, headers });
-    } catch (e) {
-      return new Response(JSON.stringify({ ok: false, error: String(e) }), { status: 500, headers });
+      if (blobs) {
+        await blobs.set(KEY(id), value, { type: 'text' });
+      } else {
+        // Fallback (non-persistent)
+        globalThis.__labels ||= new Map();
+        globalThis.__labels.set(KEY(id), { id, name, dob });
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
     }
   }
 
-  return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers });
+  return new Response(JSON.stringify({ error: 'method not allowed' }), { status: 405 });
 };
