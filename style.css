@@ -1,4 +1,3 @@
-
 :root { --bg:#0b0b0b; --fg:#fafafa; --muted:#b7b7b7; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
@@ -18,3 +17,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #editOverlay .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 #editOverlay button { padding: 10px 14px; border-radius: 10px; border: 1px solid #2f2f2f; background: #232323; color: var(--fg); cursor: pointer; }
 #editOverlay button:hover { filter: brightness(1.05); }
+
+/* --- rc1e inline (iOS no-callout) --- */
+/* rc1e: reduce iOS long-press callout & drag */
+#anchorImage{
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+html, body {
+  overscroll-behavior: none;
+}

@@ -1,4 +1,3 @@
-
 // Lab Patch r1 — Labels device-independent (prefill + save) and no corner edit button
 // Assumptions:
 // - There is an element with id="anchorImage" (the main person image)
@@ -153,4 +152,26 @@
     await hydrateFromServer();
   });
 
+})();
+
+// --- rc1e inline (iOS no-callout) ---
+// rc1e: Suppress iOS share/callout on long‑press; keep SoftEdit long‑press working
+(function(){
+  function suppressIOSCallouts(el){
+    if (!el) return;
+    // CSS-style flags via JS
+    el.style.webkitTouchCallout = 'none';
+    el.style.webkitUserSelect = 'none';
+    el.style.userSelect = 'none';
+    el.setAttribute('draggable','false');
+    // Block context menu / hold-to-save
+    el.addEventListener('contextmenu', (e)=> e.preventDefault());
+    // Some Safari gestures
+    el.addEventListener('gesturestart', (e)=> e.preventDefault());
+  }
+  // Wait for DOM then patch anchor
+  window.addEventListener('DOMContentLoaded', () => {
+    const anchor = document.querySelector('#anchorImage');
+    suppressIOSCallouts(anchor);
+  });
 })();
