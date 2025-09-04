@@ -6,5 +6,3 @@
 
 [functions]
   directory = "netlify/functions"
-
-# Keep simple; no plugins

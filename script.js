@@ -1,195 +1,197 @@
+(() => {
+  'use strict';
 
-/*
- SwipeTree Lab — rc1h (image extension fallback + on-screen debug)
- - Tries .jpg, .JPG, .jpeg, .png for each base
- - Shows a small debug line in bottom-left with the last attempted URL (tap to hide)
- - Keeps rc1f behavior (long-press + double-tap + label persistence)
-*/
-
-(function () {
-  const $ = (sel, root=document) => root.querySelector(sel);
-
-  // Basic styles & debug overlay
-  const style = document.createElement("style");
-  style.textContent = `
-    html, body { height:100%; background:#000; overscroll-behavior:none; }
-    body { margin:0; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
-    #anchorWrap, #anchor { touch-action:none; }
-    #dbg { position:fixed; left:8px; bottom:8px; font:12px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:#9cf; opacity:.8; background:rgba(0,0,0,.35); padding:6px 8px; border-radius:6px; max-width:80vw; z-index:9999; }
-    #dbg.hide { display:none; }
-    dialog::backdrop { background: rgba(0,0,0,0.35); }
-  `;
-  document.head.appendChild(style);
-
-  const dbg = document.createElement("div");
-  dbg.id = "dbg";
-  dbg.textContent = "debug: ready";
-  dbg.addEventListener("click", ()=>dbg.classList.add("hide"));
-  document.body.appendChild(dbg);
-  function setDbg(t){ dbg.textContent = t; }
-
-  const host = document.getElementById("app") || document.body;
-  if (!host.dataset.rc1h) {
-    host.dataset.rc1h = "1";
-    host.innerHTML = `
-      <div id="anchorWrap" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#000;">
-        <div id="anchor" style="text-align:center;user-select:none;">
-          <img id="photo" alt="" style="max-width:46vw;max-height:62vh;display:block;margin:0 auto;border-radius:8px;"/>
-          <div id="label" style="color:#fff;margin-top:8px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;"></div>
-        </div>
-      </div>
-      <dialog id="editDialog" style="border-radius:12px;border:none;padding:16px 16px 12px;">
-        <form method="dialog" id="editForm" style="display:flex;flex-direction:column;gap:10px;min-width:260px;">
-          <div style="font-weight:600;font-size:15px;">Edit label</div>
-          <input id="nameInput" placeholder="Name" autocomplete="off" />
-          <input id="dobInput" placeholder="DOB (any format)" autocomplete="off" />
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:2px;">
-            <button id="cancelBtn" value="cancel">Cancel</button>
-            <button id="saveBtn" value="default">Save</button>
-          </div>
-        </form>
-      </dialog>
-    `;
-  }
-
-  const CFG = (window.SWIPE_CFG || {});
-  const IMAGE_BASES = [
-    CFG.IMAGE_BASE || "",
-    "https://allofusbhere.github.io/family-tree-images",
-    "https://cdn.jsdelivr.net/gh/allofusbhere/family-tree-images@main"
-  ];
-  const EXTENSIONS = [".jpg",".JPG",".jpeg",".png"];
-
-  const getIdFromHash = () => {
-    const m = location.hash.match(/id=([0-9.]+)/);
-    return m ? m[1] : "100000";
+  // ---- Config (Lab) ----
+  const CONFIG = {
+    IMAGE_BASE: 'https://raw.githubusercontent.com/allofusbhere/family-tree-images/main/', // flat folder, e.g., 100000.jpg
+    LABELS_ENDPOINT: '/.netlify/functions/labels',
+    LONG_PRESS_MS: 500,
+    JITTER_PX: 12,
   };
-  const labelsEndpoint = (id) => `${(window.SWIPE_CFG && window.SWIPE_CFG.LABELS_ENDPOINT) || "/.netlify/functions/labels"}?id=${encodeURIComponent(id)}&_=${Date.now()}`;
 
-  async function fetchLabel(id) {
+  const $ = sel => document.querySelector(sel);
+
+  const state = {
+    id: null,
+    pressTimer: null,
+    startXY: null,
+    labels: { name: '', dob: '' },
+  };
+
+  function parseHashId() {
+    const hash = window.location.hash || '';
+    const m = /[#&]id=([0-9.]+)/.exec(hash);
+    return m ? m[1] : null;
+  }
+
+  function setStatus(msg) {
+    const el = $('#status');
+    if (el) el.textContent = msg || '';
+  }
+
+  function imageUrlFromId(id) {
+    // Accepts "140000" or "140000.1"
+    const fname = `${id}.jpg`;
+    return CONFIG.IMAGE_BASE + encodeURIComponent(fname);
+  }
+
+  async function fetchLabels(id) {
     try {
-      const res = await fetch(labelsEndpoint(id), { method: "GET", cache: "no-store" });
-      const data = res.ok ? await res.json() : {};
-      if (data && (data.name || data.dob)) return data;
-      return { id };
+      const resp = await fetch(`${CONFIG.LABELS_ENDPOINT}?id=${encodeURIComponent(id)}`, { method: 'GET' });
+      if (!resp.ok) throw new Error('labels GET failed');
+      const data = await resp.json();
+      return { name: data?.name || '', dob: data?.dob || '' };
     } catch (e) {
-      try { return JSON.parse(localStorage.getItem("label:"+id)) || { id }; } catch { return { id }; }
+      console.warn('fetchLabels error:', e);
+      return { name: '', dob: '' };
     }
   }
 
-  async function saveLabel(id, name, dob) {
-    const payload = { id, name: (name||"").trim(), dob: (dob||"").trim() };
+  async function saveLabels(id, labels) {
     try {
-      const res = await fetch(((window.SWIPE_CFG && window.SWIPE_CFG.LABELS_ENDPOINT) || "/.netlify/functions/labels"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+      const resp = await fetch(CONFIG.LABELS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...labels }),
       });
-      if (!res.ok) throw new Error("PUT failed");
-      localStorage.setItem("label:"+id, JSON.stringify(payload));
-      return await res.json();
+      if (!resp.ok) throw new Error('labels POST failed');
+      return true;
     } catch (e) {
-      localStorage.setItem("label:"+id, JSON.stringify(payload));
-      return { ok:false, error:String(e) };
+      console.warn('saveLabels error:', e);
+      return false;
     }
   }
 
-  function renderLabel({ name, dob }) {
-    const parts = [];
-    if (name) parts.push(name);
-    if (dob) parts.push(dob);
-    $("#label").textContent = parts.join(" • ");
+  async function loadAnchor(id) {
+    state.id = id;
+    const img = $('#anchorImage');
+    img.src = imageUrlFromId(id);
+    img.alt = `ID ${id}`;
+    setStatus(`ID ${id}`);
+
+    // Load labels from server on each anchor load
+    state.labels = await fetchLabels(id);
+    renderLabels();
   }
 
-  function tryLoadImage(id, baseIdx=0, extIdx=0) {
-    const img = $("#photo");
-    if (baseIdx >= IMAGE_BASES.length) {
-      img.removeAttribute("src");
-      setDbg("image not found for "+id);
-      $("#label").textContent = "Image not found for " + id;
-      return;
-    }
-    const base = IMAGE_BASES[baseIdx];
-    const ext = EXTENSIONS[extIdx];
-    const sep = base && !base.endsWith("/") ? "/" : "";
-    const url = `${base}${base ? sep : ""}${id}${ext}`;
-    setDbg("img: "+url);
-
-    img.onerror = () => {
-      const nextExt = extIdx + 1;
-      if (nextExt < EXTENSIONS.length) {
-        tryLoadImage(id, baseIdx, nextExt);
-      } else {
-        tryLoadImage(id, baseIdx + 1, 0);
-      }
-    };
-    img.onload = () => { img.onerror = null; setDbg("loaded: "+url); };
-    img.crossOrigin = "anonymous";
-    img.src = url + `?v=${Date.now()}`;
-    img.alt = id;
+  function renderLabels() {
+    $('#nameLabel').textContent = state.labels.name || '';
+    $('#dobLabel').textContent = state.labels.dob || '';
   }
 
-  async function hydrate(id) {
-    tryLoadImage(id, 0, 0);
-    const data = await fetchLabel(id);
-    renderLabel(data);
-    currentLabel = { id, name: data.name || "", dob: data.dob || "" };
+  // ---- Long‑press detection ----
+  function withinJitter(a, b) {
+    return Math.abs(a.x - b.x) <= CONFIG.JITTER_PX && Math.abs(a.y - b.y) <= CONFIG.JITTER_PX;
   }
 
-  // Gestures: long-press + double-tap
-  let pressTimer = null;
-  let touchStartXY = null;
-  const PRESS_MS = 500;
-  const JITTER = 18;
-  let lastTapTime = 0;
-  let currentLabel = { id: "", name: "", dob: "" };
-
-  function withinJitter(a, b) { return Math.abs(a.x - b.x) <= JITTER && Math.abs(a.y - b.y) <= JITTER; }
-  function openEditorPrefilled() {
-    $("#nameInput").value = currentLabel.name || "";
-    $("#dobInput").value = currentLabel.dob || "";
-    $("#editDialog").showModal();
-  }
   function startPress(e) {
-    if (e.cancelable) e.preventDefault();
-    const pt = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
-    touchStartXY = pt;
-    clearTimeout(pressTimer);
-    pressTimer = setTimeout(openEditorPrefilled, PRESS_MS);
+    const point = ('touches' in e && e.touches.length > 0)
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY }
+      : { x: e.clientX, y: e.clientY };
+    state.startXY = point;
+
+    clearTimeout(state.pressTimer);
+    state.pressTimer = setTimeout(() => {
+      // Only open if we haven't moved much
+      const current = state.startXY;
+      if (current) openSoftEdit();
+    }, CONFIG.LONG_PRESS_MS);
   }
+
   function movePress(e) {
-    if (!pressTimer || !touchStartXY) return;
-    const pt = ("touches" in e && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
-    if (!withinJitter(touchStartXY, pt)) { clearTimeout(pressTimer); pressTimer = null; }
-  }
-  function endPress(){ clearTimeout(pressTimer); pressTimer=null; touchStartXY=null; }
-  function onTap(e){
-    const now=Date.now(); if(now-lastTapTime<300){ if(e.cancelable)e.preventDefault(); openEditorPrefilled(); lastTapTime=0; } else { lastTapTime=now; }
+    if (!state.startXY) return;
+    const point = ('touches' in e && e.touches.length > 0)
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY }
+      : { x: e.clientX, y: e.clientY };
+    if (!withinJitter(state.startXY, point)) {
+      clearTimeout(state.pressTimer);
+    }
   }
 
-  const target = $("#anchor");
-  target.addEventListener("pointerdown", startPress);
-  target.addEventListener("pointermove", movePress);
-  target.addEventListener("pointerup", endPress);
-  target.addEventListener("pointercancel", endPress);
-  target.addEventListener("touchstart", startPress, { passive:false });
-  target.addEventListener("touchmove", movePress, { passive:false });
-  target.addEventListener("touchend", endPress, { passive:false });
-  target.addEventListener("touchcancel", endPress, { passive:false });
-  target.addEventListener("click", onTap);
+  function endPress() {
+    clearTimeout(state.pressTimer);
+    state.startXY = null;
+  }
 
-  $("#editForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const id = getIdFromHash();
-    const name = $("#nameInput").value;
-    const dob = $("#dobInput").value;
-    await saveLabel(id, name, dob);
-    currentLabel = { id, name, dob };
-    renderLabel(currentLabel);
-    $("#editDialog").close();
+  // ---- SoftEdit modal ----
+  function openSoftEdit() {
+    const dlg = $('#softEdit');
+    $('#nameInput').value = state.labels.name || '';
+    $('#dobInput').value = state.labels.dob || '';
+    dlg.showModal();
+  }
+
+  function closeSoftEdit() {
+    $('#softEdit').close();
+  }
+
+  async function onSoftEditSubmit(val) {
+    if (val !== 'save') return closeSoftEdit();
+    const name = $('#nameInput').value.trim();
+    const dob = $('#dobInput').value.trim();
+    const payload = { name, dob };
+    const ok = await saveLabels(state.id, payload);
+    if (ok) {
+      state.labels = payload;
+      renderLabels();
+      setStatus('Saved');
+    } else {
+      setStatus('Save failed');
+    }
+    closeSoftEdit();
+  }
+
+  function bindUI() {
+    const img = $('#anchorImage');
+    // Touch/pointer/mouse long‑press
+    img.addEventListener('touchstart', startPress, { passive: true });
+    img.addEventListener('touchmove', movePress, { passive: true });
+    img.addEventListener('touchend', endPress, { passive: true });
+    img.addEventListener('touchcancel', endPress, { passive: true });
+
+    img.addEventListener('pointerdown', startPress);
+    img.addEventListener('pointermove', movePress);
+    img.addEventListener('pointerup', endPress);
+    img.addEventListener('pointercancel', endPress);
+    img.addEventListener('pointerleave', endPress);
+
+    img.addEventListener('mousedown', startPress);
+    img.addEventListener('mousemove', movePress);
+    img.addEventListener('mouseup', endPress);
+    img.addEventListener('mouseleave', endPress);
+
+    // Prevent image dragging/ghost image
+    img.addEventListener('dragstart', e => e.preventDefault());
+
+    $('#softEdit').addEventListener('close', () => {
+      // no-op
+    });
+    $('#softEditForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+    });
+    $('#saveBtn').addEventListener('click', () => onSoftEditSubmit('save'));
+    $('#cancelBtn').addEventListener('click', () => onSoftEditSubmit('cancel'));
+
+    $('#startBtn').addEventListener('click', () => {
+      const id = ($('#startId').value || '').trim();
+      if (id) {
+        history.replaceState({}, '', `#id=${encodeURIComponent(id)}`);
+        loadAnchor(id);
+      }
+    });
+  }
+
+  function initFromHashOrInput() {
+    const id = parseHashId();
+    if (id) {
+      $('#startId').value = id;
+      loadAnchor(id);
+    }
+  }
+
+  // ---- Boot ----
+  document.addEventListener('DOMContentLoaded', () => {
+    bindUI();
+    initFromHashOrInput();
   });
-  $("#cancelBtn").addEventListener("click", (e) => { e.preventDefault(); $("#editDialog").close(); });
-
-  window.addEventListener("hashchange", () => hydrate(getIdFromHash()));
-  hydrate(getIdFromHash());
 })();
