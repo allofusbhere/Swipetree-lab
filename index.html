@@ -4,11 +4,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SwipeTree Lab — SoftEdit (rc1d)</title>
+  <title>SwipeTree Lab — SoftEdit (rc1d-cdn)</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Lab Patch r1 — Labels device-independent -->
+  <!-- Lab Patch r1 (CDN image source) -->
   <main id="app">
     <div id="anchorWrap">
       <img id="anchorImage" alt="Anchor" />
@@ -40,17 +40,20 @@
 
   <script src="script.js"></script>
   <script>
-    // Minimal loader: set the anchor image src from the current #id, with fallback
+    // Use the GitHub Pages image repo so Netlify Lab can load images
+    const IMAGE_BASE = "https://allofusbhere.github.io/family-tree-images/";
+    const PLACEHOLDER = "placeholder.jpg";
+
     (function() {
       function getId(){
-        const m = location.hash.match(/id=([\d.]+)/);
+        const m = location.hash.match(/id=([\\d.]+)/);
         return m ? m[1] : '100000';
       }
       function setImage(){
         const id = getId();
         const img = document.getElementById('anchorImage');
-        img.src = id + '.jpg';
-        img.onerror = () => { img.src = 'placeholder.jpg'; };
+        img.src = IMAGE_BASE + id + '.jpg';
+        img.onerror = () => { img.src = PLACEHOLDER; };
         img.setAttribute('data-id', id);
       }
       window.addEventListener('hashchange', setImage);
