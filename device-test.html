@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Independent Labels Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f0f8ff;
+        }
+        
+        .test-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .photo-container {
+            position: relative;
+            display: inline-block;
+            margin: 20px;
+        }
+        
+        .family-photo {
+            width: 200px;
+            height: 200px;
+            background: #87CEEB;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            color: white;
+            border: 3px solid #4682B4;
+        }
+        
+        .label-input {
+            margin-top: 10px;
+            display: block;
+            width: 200px;
+            padding: 8px;
+            border: 2px solid #4682B4;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        
+        .test-log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .sync-test {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: #4682B4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #5f9ea0;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 Device Independent Labels Test</h1>
+        <p><strong>Purpose:</strong> Test cross-device label synchronization using discoveries from elegant-panda-0f4cac</p>
+        
+        <div id="connectionStatus" class="status info">
+            📡 Connecting to Netlify Functions...
+        </div>
+    </div>
+
+    <div class="test-container">
+        <h2>👨‍👩‍👧‍👦 Test Family Members</h2>
+        <div class="sync-test">
+            <div class="photo-container">
+                <div class="family-photo">A</div>
+                <input type="text" class="label-input" id="label-aaron" placeholder="Aaron's label" data-person="aaron">
+            </div>
+            
+            <div class="photo-container">
+                <div class="family-photo">D</div>
+                <input type="text" class="label-input" id="label-damita" placeholder="Damita's label" data-person="damita">
+            </div>
+            
+            <div class="photo-container">
+                <div class="family-photo">J</div>
+                <input type="text" class="label-input" id="label-jamal" placeholder="Jamal's label" data-person="jamal">
+            </div>
+        </div>
+        
+        <div>
+            <button onclick="testSaveLabels()">💾 Save All Labels</button>
+            <button onclick="testLoadLabels()">📥 Load All Labels</button>
+            <button onclick="clearAllLabels()">🗑️ Clear All Labels</button>
+            <button onclick="testSyncSpeed()">⚡ Test Sync Speed</button>
+        </div>
+    </div>
+
+    <div class="test-container">
+        <h2>📊 Sync Test Results</h2>
+        <div id="testResults" class="test-log">
+            Starting device independence test...<br>
+        </div>
+    </div>
+
+    <script>
+        // Configuration based on elegant-panda-0f4cac discoveries
+        const API_BASE = 'https://elegant-panda-0f4cac.netlify.app/.netlify/functions';
+        
+        let testLog = [];
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}`;
+            testLog.push(logEntry);
+            
+            const resultsDiv = document.getElementById('testResults');
+            resultsDiv.innerHTML = testLog.join('<br>') + '<br>';
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+            
+            console.log(logEntry);
+        }
+        
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        // Test Netlify function connectivity
+        async function testConnection() {
+            try {
+                log('🔍 Testing connection to Netlify functions...');
+                const response = await fetch(`${API_BASE}/labels?test=true`);
+                
+                if (response.ok) {
+                    const data = await response.text();
+                    log(`✅ Connection successful: ${data}`, 'success');
+                    updateStatus('✅ Connected to Netlify Functions', 'success');
+                    return true;
+                } else {
+                    log(`❌ Connection failed: ${response.status} ${response.statusText}`, 'error');
+                    updateStatus('❌ Connection Failed', 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`❌ Connection error: ${error.message}`, 'error');
+                updateStatus('❌ Connection Error', 'error');
+                return false;
+            }
+        }
+        
+        // Save labels to Netlify function
+        async function saveLabel(person, labelText) {
+            try {
+                const response = await fetch(`${API_BASE}/labels`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        person: person,
+                        label: labelText,
+                        timestamp: new Date().toISOString(),
+                        device: navigator.userAgent.includes('iPad') ? 'iPad' : 
+                               navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Desktop'
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    log(`💾 Saved label for ${person}: "${labelText}"`);
+                    return result;
+                } else {
+                    log(`❌ Failed to save label for ${person}: ${response.statusText}`, 'error');
+                    return null;
+                }
+            } catch (error) {
+                log(`❌ Error saving label for ${person}: ${error.message}`, 'error');
+                return null;
+            }
+        }
+        
+        // Load labels from Netlify function
+        async function loadLabel(person) {
+            try {
+                const response = await fetch(`${API_BASE}/labels?person=${person}`);
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    log(`📥 Loaded label for ${person}: "${result.label || 'empty'}"`);
+                    return result.label || '';
+                } else {
+                    log(`❌ Failed to load label for ${person}: ${response.statusText}`, 'error');
+                    return '';
+                }
+            } catch (error) {
+                log(`❌ Error loading label for ${person}: ${error.message}`, 'error');
+                return '';
+            }
+        }
+        
+        // Test functions
+        async function testSaveLabels() {
+            log('🧪 Starting save test...');
+            const inputs = document.querySelectorAll('.label-input');
+            
+            for (const input of inputs) {
+                const person = input.dataset.person;
+                const label = input.value.trim();
+                
+                if (label) {
+                    await saveLabel(person, label);
+                }
+            }
+            
+            log('✅ Save test completed');
+        }
+        
+        async function testLoadLabels() {
+            log('🧪 Starting load test...');
+            const inputs = document.querySelectorAll('.label-input');
+            
+            for (const input of inputs) {
+                const person = input.dataset.person;
+                const label = await loadLabel(person);
+                
+                if (label) {
+                    input.value = label;
+                    input.style.background = '#d4edda';
+                    setTimeout(() => {
+                        input.style.background = '';
+                    }, 2000);
+                }
+            }
+            
+            log('✅ Load test completed');
+        }
+        
+        async function clearAllLabels() {
+            log('🧪 Clearing all labels...');
+            const inputs = document.querySelectorAll('.label-input');
+            
+            for (const input of inputs) {
+                input.value = '';
+                const person = input.dataset.person;
+                await saveLabel(person, '');
+            }
+            
+            log('✅ All labels cleared');
+        }
+        
+        async function testSyncSpeed() {
+            log('🧪 Testing sync speed...');
+            const testData = {
+                person: 'speedtest',
+                label: `Speed test ${Date.now()}`,
+                timestamp: new Date().toISOString()
+            };
+            
+            const startTime = performance.now();
+            
+            // Save
+            const saveResult = await saveLabel(testData.person, testData.label);
+            const saveTime = performance.now();
+            
+            // Load
+            const loadResult = await loadLabel(testData.person);
+            const loadTime = performance.now();
+            
+            log(`⚡ Sync timing: Save=${Math.round(saveTime-startTime)}ms, Load=${Math.round(loadTime-saveTime)}ms`);
+            
+            if (loadResult === testData.label) {
+                log('✅ Sync speed test PASSED - data matches');
+            } else {
+                log(`❌ Sync speed test FAILED - expected "${testData.label}", got "${loadResult}"`, 'error');
+            }
+        }
+        
+        // Auto-save on input change (device independence test)
+        document.addEventListener('DOMContentLoaded', () => {
+            const inputs = document.querySelectorAll('.label-input');
+            
+            inputs.forEach(input => {
+                input.addEventListener('input', async (e) => {
+                    const person = e.target.dataset.person;
+                    const label = e.target.value;
+                    
+                    // Debounce to avoid too many saves
+                    clearTimeout(e.target.saveTimeout);
+                    e.target.saveTimeout = setTimeout(async () => {
+                        await saveLabel(person, label);
+                    }, 1000);
+                });
+            });
+            
+            // Initial connection test
+            testConnection();
+            
+            // Auto-load existing labels
+            setTimeout(() => {
+                testLoadLabels();
+            }, 2000);
+        });
+        
+        // Periodic sync test (check every 30 seconds)
+        setInterval(async () => {
+            const connected = await testConnection();
+            if (connected) {
+                log('🔄 Periodic sync check - connection healthy');
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
