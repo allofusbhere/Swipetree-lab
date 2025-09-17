@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Existence Tester</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            background: #000; 
+            color: #fff; 
+            padding: 20px; 
+        }
+        .test-item { 
+            margin: 10px 0; 
+            padding: 10px; 
+            border: 1px solid #333; 
+            border-radius: 5px;
+        }
+        .exists { background: #004400; }
+        .missing { background: #440000; }
+        .testing { background: #444400; }
+        button { 
+            padding: 10px 20px; 
+            background: #0066cc; 
+            color: white; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover { background: #0052a3; }
+    </style>
+</head>
+<body>
+    <h1>Image Existence Tester</h1>
+    <p>Testing specific images that should exist for person 210000:</p>
+    
+    <button onclick="testImages()">Test Images</button>
+    <button onclick="clearResults()">Clear Results</button>
+    
+    <div id="results"></div>
+
+    <script>
+        const IMG_BASE = 'https://allofusbhere.github.io/family-tree-images/';
+        
+        // Same exists function as SwipeTree
+        function exists(src) { 
+            return new Promise(resolve => { 
+                const img = new Image(); 
+                img.onload = () => resolve(true); 
+                img.onerror = () => resolve(false); 
+                img.src = src + `?v=${Date.now()%1e7}`; 
+            }); 
+        }
+        
+        async function testSpecificImage(id) {
+            const src = IMG_BASE + id + '.jpg';
+            const resultsDiv = document.getElementById('results');
+            
+            // Add testing status
+            const testDiv = document.createElement('div');
+            testDiv.className = 'test-item testing';
+            testDiv.id = `test-${id}`;
+            testDiv.innerHTML = `Testing ${id}.jpg... <em>Checking ${src}</em>`;
+            resultsDiv.appendChild(testDiv);
+            
+            // Test existence
+            const imageExists = await exists(src);
+            
+            // Update result
+            testDiv.className = imageExists ? 'test-item exists' : 'test-item missing';
+            testDiv.innerHTML = `
+                <strong>${id}.jpg:</strong> ${imageExists ? '✅ EXISTS' : '❌ MISSING'}<br>
+                <small>URL: ${src}</small>
+            `;
+            
+            return { id, src, exists: imageExists };
+        }
+        
+        async function testImages() {
+            document.getElementById('results').innerHTML = '<h2>Testing Images...</h2>';
+            
+            // Test the specific images that should exist for 210000's children
+            const imagesToTest = ['211000', '212000', '213000'];
+            
+            console.log('Starting image existence tests...');
+            
+            const results = [];
+            for (const id of imagesToTest) {
+                const result = await testSpecificImage(id);
+                results.push(result);
+                console.log(`${id}.jpg:`, result.exists ? 'EXISTS' : 'MISSING');
+            }
+            
+            // Summary
+            const existingCount = results.filter(r => r.exists).length;
+            const summary = document.createElement('div');
+            summary.className = 'test-item';
+            summary.style.background = '#333';
+            summary.innerHTML = `<h3>Summary: ${existingCount}/${results.length} images found</h3>`;
+            document.getElementById('results').appendChild(summary);
+            
+            console.log('Test complete:', results);
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+        
+        // Auto-test on load
+        window.addEventListener('load', () => {
+            setTimeout(testImages, 500);
+        });
+    </script>
+</body>
+</html>
